@@ -8,7 +8,6 @@ Provides:
 
 from __future__ import annotations
 
-import asyncio
 from unittest.mock import MagicMock
 
 import fakeredis.aioredis
@@ -17,18 +16,6 @@ import pytest_asyncio
 
 from src.config.defaults import DEFAULTS
 from src.config.redis_keys import RedisKeys
-
-
-# ---------------------------------------------------------------------------
-# Event loop
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create a session-scoped event loop."""
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
 
 
 # ---------------------------------------------------------------------------

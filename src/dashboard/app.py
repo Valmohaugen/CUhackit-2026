@@ -3,10 +3,26 @@
 Main entry point for the Streamlit frontend. Renders the sidebar
 and tab layout for all module panels.
 """
-
 from __future__ import annotations
+from pathlib import Path
+from src.dashboard.components.sidebar import render_sidebar
 
+import sys
 import streamlit as st
+
+try:
+    from ._bootstrap import ensure_project_root_on_path
+except ImportError:
+    from _bootstrap import ensure_project_root_on_path
+
+
+def ensure_project_root_on_path() -> None:
+    """Insert project root at the start of sys.path if not already present."""
+    project_root = Path(__file__).resolve().parents[2]  # adjust as needed
+    if str(project_root) not in sys.path:
+        sys.path.insert(0, str(project_root))
+
+ensure_project_root_on_path()
 
 st.set_page_config(
     page_title="Quantum DNS Shield",
@@ -19,7 +35,6 @@ st.set_page_config(
 # Sidebar (master toggles + QRNG status)
 # ---------------------------------------------------------------------------
 
-from src.dashboard.components.sidebar import render_sidebar
 render_sidebar()
 
 # ---------------------------------------------------------------------------

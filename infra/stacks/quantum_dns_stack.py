@@ -122,7 +122,20 @@ class QuantumDNSStack(Stack):
         cluster = ecs.Cluster(self, "Cluster", vpc=vpc)
 
         image = ecr_assets.DockerImageAsset(
-            self, "AppImage", directory="../"
+            self,
+            "AppImage",
+            directory="../",
+            exclude=[
+                "cdk.out",
+                "infra/cdk.out",
+                ".git",
+                ".gitignore",
+                "tests",
+                "__pycache__",
+                "*.pyc",
+                ".env",
+                ".claude",
+            ],
         )
 
         task_def = ecs.FargateTaskDefinition(
@@ -200,6 +213,7 @@ class QuantumDNSStack(Stack):
         listener.add_targets(
             "Dashboard",
             port=8501,
+            protocol=elbv2.ApplicationProtocol.HTTP,
             targets=[
                 service.load_balancer_target(container_name="App", container_port=8501)
             ],

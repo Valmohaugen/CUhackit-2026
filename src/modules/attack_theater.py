@@ -418,7 +418,7 @@ def seed_recovery_analysis(seed_bytes: bytes) -> dict:
         "proportion": round(proportion, 6),
         "z_statistic": round(z_stat, 6),
         "p_value": round(p_balance, 6),
-        "pass": p_balance >= 0.01,
+        "pass": bool(p_balance >= 0.01),
     }
 
     # -------------------------------------------------------------------------
@@ -444,7 +444,7 @@ def seed_recovery_analysis(seed_bytes: bytes) -> dict:
         "expected_runs": round(expected_runs, 2),
         "z_statistic": round(z_runs, 6),
         "p_value": round(p_runs, 6),
-        "pass": p_runs >= 0.01,
+        "pass": bool(p_runs >= 0.01),
     }
 
     # -------------------------------------------------------------------------
@@ -462,7 +462,7 @@ def seed_recovery_analysis(seed_bytes: bytes) -> dict:
         "chi2_statistic": round(chi2_stat, 4),
         "degrees_of_freedom": 255,
         "p_value": round(p_chi2, 6),
-        "pass": p_chi2 >= 0.01,
+        "pass": bool(p_chi2 >= 0.01),
         "unique_bytes": len(byte_counts),
     }
 
@@ -488,7 +488,7 @@ def seed_recovery_analysis(seed_bytes: bytes) -> dict:
         "lag1_correlation": round(autocorr, 6),
         "z_statistic": round(z_autocorr, 6),
         "p_value": round(p_autocorr, 6),
-        "pass": p_autocorr >= 0.01,
+        "pass": bool(p_autocorr >= 0.01),
     }
 
     # -------------------------------------------------------------------------

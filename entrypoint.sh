@@ -1,6 +1,8 @@
 #!/bin/bash
 set -e
 
+export PYTHONPATH="/app${PYTHONPATH:+:$PYTHONPATH}"
+
 echo "[entrypoint] Starting Quantum DNS Shield..."
 
 # Start FastAPI backend
