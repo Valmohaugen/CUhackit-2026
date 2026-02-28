@@ -81,14 +81,6 @@ class QuantumDNSStack(Stack):
         ibm_token = secretsmanager.Secret(
             self, "IBMToken", secret_name="quantum-dns/ibm-token"
         )
-        redis_auth = secretsmanager.Secret(
-            self,
-            "RedisAuth",
-            secret_name="quantum-dns/redis-auth",
-            generate_secret_string=secretsmanager.SecretStringGenerator(
-                exclude_punctuation=True, password_length=32
-            ),
-        )
         openai_key = secretsmanager.Secret(
             self, "OpenAIKey", secret_name="quantum-dns/openai-key"
         )
@@ -161,7 +153,6 @@ class QuantumDNSStack(Stack):
             },
             secrets={
                 "IBM_QUANTUM_TOKEN": ecs.Secret.from_secrets_manager(ibm_token),
-                "REDIS_PASSWORD": ecs.Secret.from_secrets_manager(redis_auth),
                 "OPENAI_API_KEY": ecs.Secret.from_secrets_manager(openai_key),
             },
         )
