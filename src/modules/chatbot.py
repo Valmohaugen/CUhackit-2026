@@ -239,7 +239,7 @@ async def chat(
     context: dict[str, Any] | None = None,
     history: list[dict[str, str]] | None = None,
 ) -> str:
-    """Send a message to Claude and get a response.
+    """Send a message to OpenAI and get a response.
 
     Args:
         user_message: The user's question or message.
@@ -249,48 +249,46 @@ async def chat(
     Returns:
         The assistant's response text.
     """
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    api_key = os.getenv("OPENAI_API_KEY", "")
     if not api_key:
         return (
-            "The AI assistant requires an Anthropic API key. "
-            "Set the ANTHROPIC_API_KEY environment variable to enable this feature."
+            "The AI assistant requires an OpenAI API key. "
+            "Set the OPENAI_API_KEY environment variable to enable this feature."
         )
 
     try:
-        import anthropic
+        from openai import AsyncOpenAI
     except ImportError:
         return (
-            "The `anthropic` package is not installed. "
-            "Run `pip install anthropic` to enable the AI assistant."
+            "The `openai` package is not installed. "
+            "Run `pip install openai` to enable the AI assistant."
         )
 
-    # Build messages
-    messages: list[dict[str, str]] = []
+    # Build messages list for OpenAI chat completions
+    messages: list[dict[str, str]] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     # Add history
     if history:
-        for msg in history[-10:]:  # Last 10 messages for context window
+        for msg in history[-10:]:
             messages.append({"role": msg["role"], "content": msg["content"]})
 
     # Build user message with context injection
-    content = user_message
+    text = user_message
     if context:
         context_str = _format_context(context)
-        content = f"{user_message}\n\n[Current context: {context_str}]"
-
-    messages.append({"role": "user", "content": content})
+        text = f"{user_message}\n\n[Current context: {context_str}]"
+    messages.append({"role": "user", "content": text})
 
     try:
-        client = anthropic.AsyncAnthropic(api_key=api_key)
-        response = await client.messages.create(
-            model="claude-sonnet-4-5-20250514",
-            max_tokens=1024,
-            system=SYSTEM_PROMPT,
+        client = AsyncOpenAI(api_key=api_key)
+        response = await client.chat.completions.create(
+            model="gpt-4o-mini",
             messages=messages,
+            max_tokens=1024,
         )
-        return response.content[0].text
+        return response.choices[0].message.content
     except Exception as e:
-        logger.error("[chatbot] API error: %s", e)
+        logger.error("[chatbot] OpenAI API error: %s", e)
         return f"Sorry, I encountered an error: {e}"
 
 

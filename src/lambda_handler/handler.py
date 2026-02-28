@@ -120,7 +120,16 @@ def _generate_ibm_bits(num_qubits: int, num_shots: int) -> tuple[str, str]:
         backend = service.least_busy(min_num_qubits=num_qubits, simulator=False)
         backend_name = backend.name
 
-        logger.info("[qrng] Using IBM backend: %s", backend_name)
+        # Clamp to actual backend capacity
+        max_qubits = backend.num_qubits
+        if num_qubits > max_qubits:
+            logger.warning(
+                "[qrng] Clamped qubits from %d to IBM backend max %d (%s)",
+                num_qubits, max_qubits, backend_name,
+            )
+            num_qubits = max_qubits
+
+        logger.info("[qrng] Using IBM backend: %s (%d qubits)", backend_name, num_qubits)
 
         # Step 3: Build Hadamard + measure circuit (maximally superposed state)
         circ = QuantumCircuit(num_qubits, num_qubits)
@@ -371,12 +380,25 @@ def lambda_handler(event: dict, context: object) -> dict:
     backend_config = r.get("config:backend") or "aer"
     logger.info("[qrng] Using extractor: %s, backend: %s", extractor_method, backend_config)
 
+    # Auto-clamp qubit count to backend capacity to prevent circuit errors
+    if backend_config == "ibm":
+        num_qubits = NUM_QUBITS  # IBM path clamps internally after backend selection
+    else:
+        aer = AerSimulator()
+        max_qubits = aer.configuration().n_qubits
+        num_qubits = min(NUM_QUBITS, max_qubits)
+        if num_qubits < NUM_QUBITS:
+            logger.warning(
+                "[qrng] Clamped NUM_QUBITS from %d to backend max %d",
+                NUM_QUBITS, max_qubits,
+            )
+
     # Step 1: Generate raw bits
     backend_used = "aer_simulator"
     if backend_config == "ibm":
-        raw_bits_str, backend_used = _generate_ibm_bits(NUM_QUBITS, NUM_SHOTS)
+        raw_bits_str, backend_used = _generate_ibm_bits(num_qubits, NUM_SHOTS)
     else:
-        raw_bits_str = _generate_chunked_bits(NUM_QUBITS, CHUNK_SIZE, NUM_SHOTS)
+        raw_bits_str = _generate_chunked_bits(num_qubits, CHUNK_SIZE, NUM_SHOTS)
     raw_bits = np.array([int(b) for b in raw_bits_str], dtype=np.uint8)
     logger.info("[qrng] Generated %d raw bits via %s", len(raw_bits), backend_used)
 

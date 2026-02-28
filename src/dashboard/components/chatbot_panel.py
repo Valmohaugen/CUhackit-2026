@@ -78,7 +78,7 @@ def _send_message(message: str) -> None:
     else:
         assistant_msg = (
             "Unable to connect to the AI backend. Ensure "
-            "ANTHROPIC_API_KEY is set and the API is running."
+            "OPENAI_API_KEY is set and the API is running."
         )
 
     st.session_state.chat_history.append({"role": "assistant", "content": assistant_msg})
