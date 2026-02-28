@@ -40,8 +40,10 @@ step_prereqs() {
         fi
     done
     if ! command -v cdk &>/dev/null; then
-        warn "CDK CLI not found. Installing..."
-        npm install -g aws-cdk
+        warn "CDK CLI not found. Installing to ~/.npm-global (no sudo needed)..."
+        mkdir -p "$HOME/.npm-global"
+        npm install -g aws-cdk --prefix "$HOME/.npm-global"
+        export PATH="$HOME/.npm-global/bin:$PATH"
     fi
     if [[ ${#missing[@]} -gt 0 ]]; then
         fail "Missing tools: ${missing[*]}
@@ -222,12 +224,10 @@ step_bootstrap() {
 step_clean_secrets() {
     header "Step 6/10: Cleaning stale secrets"
     for secret in quantum-dns/ibm-token quantum-dns/redis-auth quantum-dns/openai-key; do
-        # Force-delete any secrets stuck in scheduled-deletion from prior deploys
-        local status
-        status=$(aws secretsmanager describe-secret --secret-id "$secret" --region "$REGION" \
-            --query "DeletedDate" --output text 2>/dev/null || echo "None")
-        if [[ "$status" != "None" && -n "$status" ]]; then
-            info "Removing stale secret: $secret"
+        # Force-delete any existing secret (active or scheduled-deletion) so CDK can recreate it
+        if aws secretsmanager describe-secret --secret-id "$secret" --region "$REGION" \
+                &>/dev/null 2>&1; then
+            info "Removing existing secret: $secret"
             aws secretsmanager delete-secret --secret-id "$secret" \
                 --force-delete-without-recovery --region "$REGION" 2>/dev/null || true
             sleep 2

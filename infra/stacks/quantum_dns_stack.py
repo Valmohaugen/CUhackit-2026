@@ -128,6 +128,7 @@ class QuantumDNSStack(Stack):
             self,
             "AppImage",
             directory="../",
+            platform=ecr_assets.Platform.LINUX_AMD64,
             exclude=[
                 "cdk.out",
                 "infra/cdk.out",
