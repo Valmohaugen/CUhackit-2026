@@ -5,14 +5,14 @@ dropdowns. Centered title, clean white background, tabbed panels.
 """
 from __future__ import annotations
 
-import streamlit as st
-
 try:
     from ._bootstrap import ensure_project_root_on_path
 except ImportError:
     from _bootstrap import ensure_project_root_on_path
 
 ensure_project_root_on_path()
+
+import streamlit as st
 
 from src.dashboard.components.sidebar import render_control_bar
 from src.dashboard.components.chatbot_panel import render_chat_tab
@@ -82,10 +82,23 @@ h3, h4, h5, h6 {
 }
 h3 { font-size: 1.15rem !important; }
 
-/* Top header bar */
-.stApp > header {
-    background: #FAFAFA !important;
-    border-bottom: 3px solid #F56600;
+/* Hide top header bar entirely and collapse its space */
+.stApp > header,
+[data-testid="stHeader"] {
+    display: none !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+/* Remove top padding from main content area */
+[data-testid="stAppViewBlockContainer"],
+.block-container {
+    padding-top: 0.25rem !important;
+}
+[data-testid="stMainBlockContainer"] {
+    padding-top: 0.25rem !important;
 }
 
 /* Tabs */
@@ -152,13 +165,54 @@ button[data-baseweb="tab"][aria-selected="true"] {
     font-weight: 600;
 }
 
-/* Selectbox: compact */
+/* Selectbox: compact, centered labels */
 .stSelectbox label {
     font-size: 0.8rem !important;
     color: #666666 !important;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.03em;
+    text-align: center !important;
+    width: 100% !important;
+    display: block !important;
+}
+/* Selectbox: cleaner dropdown bubble */
+.stSelectbox [data-baseweb="select"] {
+    border-radius: 8px !important;
+    border: 1px solid #E0E0E0 !important;
+}
+.stSelectbox [data-baseweb="select"]:hover {
+    border-color: #CCCCCC !important;
+}
+.stSelectbox [data-baseweb="select"] > div {
+    text-align: center !important;
+    justify-content: center !important;
+    display: flex !important;
+    align-items: center !important;
+}
+.stSelectbox [data-baseweb="select"] > div > div:first-child {
+    flex: 1 !important;
+    text-align: center !important;
+    padding-right: 0 !important;
+}
+.stSelectbox [data-baseweb="select"] span,
+.stSelectbox [data-baseweb="select"] [data-testid="stMarkdownContainer"] {
+    text-align: center !important;
+    width: 100% !important;
+    display: block !important;
+}
+[data-baseweb="popover"] ul {
+    border-radius: 8px !important;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08) !important;
+    border: 1px solid #E8E8E8 !important;
+}
+[data-baseweb="popover"] li {
+    text-align: center !important;
+    justify-content: center !important;
+}
+[data-baseweb="popover"] li[aria-selected="true"] {
+    background: #F56600 !important;
+    color: #FFFFFF !important;
 }
 
 /* Progress bar */
@@ -193,14 +247,17 @@ a:hover { color: #D45500 !important; }
 /* Dividers */
 hr { border-color: #E8E8E8 !important; }
 
-/* Hide anchors and status widget */
+/* Hide anchors, status widget, and top toolbar (Deploy button) */
 a[href^="#"], .stMarkdown a.header-link,
 h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
 [data-testid="stHeaderActionElements"],
-[data-testid="stStatusWidget"] {
+[data-testid="stStatusWidget"],
+[data-testid="stToolbar"],
+[data-testid="stDecoration"] {
     display: none !important;
 }
 
+<<<<<<< HEAD
 /* Hide Streamlit developer toolbar (Deploy, Manage, Rerun) — these are
    internal dev tools not relevant to end users of the deployed app */
 [data-testid="stToolbarActions"],
@@ -209,6 +266,26 @@ h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
     display: none !important;
 }
 
+=======
+/* Hide "Press Enter to submit form" instruction inside st.form */
+[data-testid="InputInstructions"],
+[data-testid="stFormSubmitButton"] p,
+[data-testid="stFormSubmitButton"] small {
+    display: none !important;
+}
+
+/* Sticky DNS resolver form — pins to top on scroll */
+[data-testid="stForm"] {
+    position: sticky;
+    top: 0;
+    z-index: 999;
+    background: #FAFAFA;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #E8E8E8;
+}
+
+>>>>>>> 85c2b07 (visuals)
 /* Expanders */
 .streamlit-expanderHeader {
     color: #333333 !important;
@@ -230,12 +307,6 @@ h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
 
 st.markdown(
     "<h1 style='text-align:center; margin-bottom:0;'>Quantum DNS Shield</h1>",
-    unsafe_allow_html=True,
-)
-st.markdown(
-    "<p style='text-align:center; color:#666; margin-top:0.25rem; margin-bottom:1.5rem;'>"
-    "Post-quantum DNS security · lattice-based cryptography · quantum random number generation"
-    "</p>",
     unsafe_allow_html=True,
 )
 
