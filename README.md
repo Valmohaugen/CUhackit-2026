@@ -12,7 +12,7 @@ Post-quantum DNS security demonstrator combining **lattice-based cryptographic s
 
 The internet's security stack is built on a mathematical assumption: factoring very large numbers is computationally infeasible. RSA and elliptic curve cryptography (ECC) — the algorithms protecting DNS, TLS, and digital signatures — derive their security entirely from this assumption.
 
-In 1994, Peter Shor proved that a quantum computer could factor large integers in **polynomial time** [[1]](#references). Today's quantum computers are not yet powerful enough to threaten RSA-2048, but resource estimates project that ~4,000 error-corrected logical qubits would be sufficient to break it in ~8 hours [[2]](#references). Current systems have ~1,000 noisy physical qubits. The timeline to a cryptographically relevant quantum computer (CRQC) is estimated at **2030–2040** [[3]](#references).
+In 1994, Peter Shor proved that a quantum computer could factor large integers in **polynomial time** [[1]](#references). Today's quantum computers are not yet powerful enough to threaten RSA-2048, but resource estimates project that a quantum computer with ~20 million noisy physical qubits could break RSA-2048 in ~8 hours [[2]](#references). Current gate-based systems have surpassed 1,000 noisy physical qubits (e.g., IBM Condor at 1,121 qubits), with multi-thousand-qubit systems in development. The timeline to a cryptographically relevant quantum computer (CRQC) is estimated at **2030–2040** [[3]](#references).
 
 This creates an urgent problem today — not in a decade:
 
@@ -24,7 +24,7 @@ DNS is a particularly high-value target. DNS signing keys (DNSSEC), resolver-to-
 
 NIST finalized three post-quantum cryptographic standards in 2024 (FIPS 203, 204, 205) designed to resist both classical and quantum attacks. Quantum DNS Shield demonstrates a **practical migration path** for DNS security:
 
-1. **Post-quantum DNS signing** — We perform real DNS resolution signed with NIST-standardized lattice-based and hash-based signature schemes (ML-DSA-65, Falcon-512, SLH-DSA-128), replacing the quantum-vulnerable RSA-2048 baseline. Lattice problems like Learning With Errors (LWE) have no known quantum speedup — Shor's algorithm exploits periodic structure in modular exponentiation, which lattices fundamentally lack.
+1. **Post-quantum DNS signing** — We perform real DNS resolution signed with NIST-standardized lattice-based and hash-based signature schemes (ML-DSA-65, Falcon-512, SLH-DSA-SHA2-128s), replacing the quantum-vulnerable RSA-2048 baseline. Lattice problems like Learning With Errors (LWE) have no known quantum speedup — Shor's algorithm exploits periodic structure in modular exponentiation, which lattices fundamentally lack.
 
 2. **Quantum Random Number Generation** — We generate cryptographic seeds using Qiskit quantum circuits. Unlike classical PRNGs (which are deterministic given a seed), quantum measurement outcomes are fundamentally unpredictable by the laws of physics. This provides **information-theoretic** randomness guarantees for nonce generation in PQ signature schemes.
 
@@ -36,7 +36,7 @@ NIST finalized three post-quantum cryptographic standards in 2024 (FIPS 203, 204
 
 ## Features
 
-- **Post-Quantum DNS Signing** — ML-DSA-65 (Dilithium), Falcon-512, SLH-DSA-128 (SPHINCS+) via liboqs, with RSA-2048 classical baseline and cached verifier instances for reduced latency
+- **Post-Quantum DNS Signing** — ML-DSA-65 (FIPS 204), Falcon-512 (selected for FIPS 206), SLH-DSA-SHA2-128s (FIPS 205) via liboqs, with RSA-2048 classical baseline and cached verifier instances for reduced latency
 - **Quantum Random Number Generation** — Qiskit AerSimulator with 4 entropy extractors (Von Neumann, Toeplitz, FFT, Parity); optional IBM Quantum hardware backend
 - **Generalized Shor's Algorithm** — Factors arbitrary semiprimes (N=15, 21, 33, 35, 55, 77, 91+) using UnitaryGate-based modular exponentiation, multi-base QPE, circuit visualization, and measurement histograms
 - **Quantum Attack Timing** — Side-by-side comparison of Shor's attack time vs. post-quantum scheme defense, showing which schemes beat quantum attacks and by how much
@@ -50,30 +50,40 @@ NIST finalized three post-quantum cryptographic standards in 2024 (FIPS 203, 204
 - **Side-by-Side Comparison** — Resolve the same domain across multiple scheme/source combinations with numeric latency captions
 - **AI Assistant** — GPT-4o-mini-powered chatbot tab with context-aware responses using benchmark and entropy data
 - **Real-Time Dashboard** — Streamlit with auto-refreshing live metrics (5-second interval), Enter-key form submission, configurable toggles
-- **AWS CDK Infrastructure** — ECS Fargate, ElastiCache Redis, Lambda QRNG, ALB, CloudWatch, SNS alerting
+- **AWS CDK Infrastructure** — ECS Fargate, ElastiCache Redis, ALB, CloudFront, S3 audit, CloudWatch, SNS alerting (QRNG runs as in-process background task)
 
-## Architecture
+## Intended Architecture
+
+The system was designed for deployment on AWS as a fully managed, containerized application. Even where we were unable to complete the full cloud deployment within the hackathon window, the architecture below reflects what we built toward and what every component in the codebase is wired to support. Locally, the entire stack runs via Docker Compose (FastAPI + Streamlit + Redis).
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                        AWS Cloud                              │
 │                                                               │
+│  ┌────────────┐                                              │
+│  │ CloudFront │  HTTPS termination + CDN                     │
+│  └─────┬──────┘                                              │
+│        ▼                                                      │
 │  ┌──────────┐    ┌─────────────────────────────────────┐     │
-│  │   ALB    │───→│     ECS Fargate (2 tasks)           │     │
-│  │(HTTP/S)  │    │  ┌──────────┐   ┌──────────────┐   │     │
+│  │   ALB    │───→│        ECS Fargate (1-2 tasks)      │     │
+│  │  (HTTP)  │    │  ┌──────────┐   ┌──────────────┐   │     │
 │  │          │    │  │ FastAPI  │   │  Streamlit   │   │     │
 │  │ /api/* → │    │  │  :8000   │   │    :8501     │   │     │
-│  │ /* →     │    │  └────┬─────┘   └──────┬───────┘   │     │
-│  └──────────┘    └───────┼────────────────┼───────────┘     │
+│  │ /* →     │    │  │          │   │              │   │     │
+│  └──────────┘    │  │ (QRNG    │   │              │   │     │
+│                  │  │  backgnd │   │              │   │     │
+│                  │  │  task)   │   │              │   │     │
+│                  │  └────┬─────┘   └──────┬───────┘   │     │
+│                  └───────┼────────────────┼───────────┘     │
 │                          │                │                  │
 │                   ┌──────┴────────────────┘                  │
 │                   ▼                                           │
-│            ┌────────────┐     ┌────────────────────┐         │
-│            │ ElastiCache│     │   Lambda (QRNG)    │         │
-│            │   Redis    │◄────│  Every 5 min       │         │
-│            │            │     │  Qiskit AerSim /   │         │
-│            │ - Seed pool│     │  IBM Quantum       │         │
-│            │ - Config   │     └────────────────────┘         │
+│            ┌────────────┐                                    │
+│            │ ElastiCache│                                    │
+│            │   Redis    │                                    │
+│            │            │                                    │
+│            │ - Seed pool│                                    │
+│            │ - Config   │                                    │
 │            │ - Metrics  │                                    │
 │            └────────────┘                                    │
 │                                                               │
@@ -83,6 +93,36 @@ NIST finalized three post-quantum cryptographic standards in 2024 (FIPS 203, 204
 │  └────────────┘  └──────────────┘  └───────────────────┘    │
 └──────────────────────────────────────────────────────────────┘
 ```
+
+### Component Breakdown
+
+| Component | Service | Role |
+|-----------|---------|------|
+| **CloudFront** | AWS CloudFront | Terminates HTTPS, caches static assets, provides DDoS protection. Routes all traffic to the ALB over HTTP internally. |
+| **Application Load Balancer** | AWS ALB | Path-based routing: `/api/*` requests go to FastAPI on port 8000; all other requests go to the Streamlit dashboard on port 8501. |
+| **ECS Fargate** | AWS ECS (Fargate launch type) | Runs the application container without managing servers. Auto-scales between 1 and 2 tasks based on CPU utilization (60% threshold). Each task gets 2 vCPU and 4 GB memory. |
+| **FastAPI** | Python (uvicorn) | Async REST API handling DNS resolution with PQ signing, cryptographic benchmarks, Shor's algorithm simulation, entropy comparison, migration analysis, and AI chatbot queries. Also runs the QRNG seed generation as a background task every 5 minutes. |
+| **Streamlit** | Python (Streamlit) | Interactive 5-tab dashboard: DNS Resolver, Attack Theater, Benchmarks, Live Metrics, and AI Chat. Communicates with FastAPI via synchronous HTTP calls. |
+| **ElastiCache Redis** | AWS ElastiCache (Redis 7) | Single source of truth for all runtime state: the QRNG seed pool (up to 50,000 seeds), configuration toggles, live query metrics, benchmark cache, and Shor's algorithm results. Locally, a Docker Redis container fills this role. |
+| **QRNG Background Task** | In-process (FastAPI) | Every 5 minutes, generates quantum random seeds by running 100-qubit Hadamard circuits on Qiskit's AerSimulator (or IBM Quantum hardware if configured). Applies entropy extraction (Von Neumann, Toeplitz, FFT, or Parity), validates Shannon entropy, packs bits into 32-byte seeds, and pushes them to Redis. |
+| **S3 Bucket** | AWS S3 | Stores audit provenance records for each QRNG batch — timestamps, entropy values, backend used, seed count. 30-day lifecycle policy auto-deletes old records. |
+| **Secrets Manager** | AWS Secrets Manager | Securely stores the IBM Quantum API token, Redis AUTH password, and OpenAI API key — kept out of environment variables and source code. |
+| **CloudWatch + SNS** | AWS CloudWatch, SNS | Monitoring dashboard tracking QRNG pool size, ALB request count, ECS CPU utilization, and task count. SNS alerts fire when the seed pool drops below 100 seeds or errors spike. |
+
+### How They Work in Concert
+
+When a user opens the dashboard and resolves a domain, here is the end-to-end flow through every layer:
+
+1. **User request** — The user types a domain (e.g., `example.com`) into the Streamlit dashboard and presses Enter.
+2. **Dashboard to API** — Streamlit sends a `POST /api/resolve` request to FastAPI with the domain name, selected PQ scheme, and random source preference.
+3. **Seed fetch** — FastAPI reads the `config:source` toggle from Redis. If set to `qrng`, it pops a 32-byte quantum seed from the `qrng_seed_pool` list. If the pool is empty or `prng` is selected, it falls back to `os.urandom(32)`.
+4. **DNS lookup** — A standard DNS A-record query is sent to the upstream resolver. The response IP addresses are captured.
+5. **PQ signing** — The response payload (domain + IPs + timestamp) is serialized and signed with the configured post-quantum scheme (ML-DSA-65, Falcon-512, or SLH-DSA-SHA2-128s) via liboqs. The signer instance is cached in memory to avoid repeated keygen.
+6. **Verification** — The signature is immediately verified against the public key using a cached verifier instance, producing a `verified: true/false` result.
+7. **Metrics logging** — Per-step latency (seed fetch, DNS lookup, signing, verification) and the full result are logged to Redis for the live metrics feed.
+8. **Response** — FastAPI returns the signed DNS result with a quantum readiness score (0–100%) to Streamlit, which renders it with latency breakdowns and signature details.
+
+Meanwhile, **in the background**, the QRNG task runs every 5 minutes to keep the seed pool warm — ensuring that quantum-sourced randomness is always available for the next request.
 
 ## How It Works
 
@@ -100,7 +140,7 @@ User → [1] Submit domain → [2] Fetch seed → [3] DNS lookup → [4] Sign re
 
 3. **DNS Lookup** — A standard DNS A-record query is sent to the upstream resolver (system default). The response IP addresses are captured.
 
-4. **Sign Response** — The response payload (domain + IPs + timestamp) is serialized and signed using the configured PQ scheme (ML-DSA-65, Falcon-512, SLH-DSA-128, or RSA-2048). The signer is created via the `create_signer()` factory which attempts liboqs first, then falls back to HMAC-SHA256.
+4. **Sign Response** — The response payload (domain + IPs + timestamp) is serialized and signed using the configured PQ scheme (ML-DSA-65, Falcon-512, SLH-DSA-SHA2-128s, or RSA-2048). The signer is created via the `create_signer()` factory which attempts liboqs first, then falls back to HMAC-SHA256.
 
 5. **Verify Signature** — The signature is immediately verified against the public key using a cached verifier instance (saves ~0.1-0.5ms per call). The `verified` boolean is included in the response.
 
@@ -127,8 +167,8 @@ Security reduction: Breaking ML-DSA requires solving Module-LWE, which reduces t
 | Scheme | Standard | Basis | NIST Level | Signature Size |
 |--------|----------|-------|-----------|----------------|
 | **ML-DSA-65** | FIPS 204 [[7]](#references) | Module-LWE [[6]](#references) | 3 | 3,309 B |
-| **Falcon-512** | Round 3 [[8]](#references) | NTRU [[9]](#references) | 1 | 666 B |
-| **SLH-DSA-128** | FIPS 205 [[10]](#references) | SPHINCS+ [[12]](#references) | 1 | 7,856 B |
+| **Falcon-512** | Selected for FIPS 206 (FN-DSA) [[8]](#references) | NTRU [[9]](#references) | 1 | 666 B |
+| **SLH-DSA-SHA2-128s** | FIPS 205 [[10]](#references) | SPHINCS+ [[12]](#references) | 1 | 7,856 B |
 
 ### Quantum Threats
 
@@ -443,7 +483,7 @@ CUhackit-2026/
 │   │   ├── migration_matrix.py # Migration cost/risk analysis (5 scenarios)
 │   │   ├── pq_crypto.py        # liboqs signature wrapper + factories
 │   │   └── seed_pool.py        # QRNG seed pool (Redis-backed)
-│   └── lambda_handler/         # AWS Lambda QRNG generator
+│   └── lambda_handler/         # QRNG seed generator (reused as library by FastAPI)
 │       └── handler.py          # 100-qubit circuit, 4 extractors, S3 audit
 ├── infra/                      # AWS CDK infrastructure
 │   └── stacks/quantum_dns_stack.py
@@ -490,23 +530,23 @@ cdk deploy -c certificate_arn=arn:aws:acm:us-east-1:ACCOUNT:certificate/ID
 
 4. Add CNAME record pointing your domain to the ALB DNS name (from CDK output)
 
-### Lambda QRNG Generator
+### QRNG Seed Generation
 
-The CDK stack deploys a Lambda function triggered by EventBridge every 5 minutes:
+QRNG seed generation runs as a **background task inside the FastAPI container** (not a separate Lambda function). The handler code in `src/lambda_handler/handler.py` is reused as a library — called every 5 minutes by an asyncio background loop in the API server:
 
 1. Runs a 100-qubit Hadamard circuit for 4,096 shots (chunked into 30-qubit sub-circuits for memory efficiency)
 2. Applies the configured entropy extractor (Von Neumann, Toeplitz, FFT, or Parity)
 3. Validates extracted entropy via Shannon entropy computation
-4. Packs bits into 32-byte seeds and pushes to ElastiCache Redis (capped at 50,000)
+4. Packs bits into 32-byte seeds and pushes to Redis (capped at 50,000)
 5. Writes audit provenance to S3 (if `AUDIT_BUCKET` is configured)
 
-If `IBM_QUANTUM_TOKEN` is set, the Lambda selects the least-busy IBM QPU for true quantum randomness, falling back to AerSimulator on failure.
+If `IBM_QUANTUM_TOKEN` is set, the generator selects the least-busy IBM QPU for true quantum randomness, falling back to AerSimulator on failure.
 
 ### Monitoring
 
-The CDK stack deploys:
-- **CloudWatch Dashboard** — QRNG pool size, Lambda duration, errors, invocations
-- **SNS Alerts** — Pool critically low (<100 seeds), Lambda errors, Lambda duration approaching timeout
+The CDK stack defines:
+- **CloudWatch Dashboard** — QRNG pool size, ALB request count, ECS CPU utilization, task count
+- **SNS Alerts** — Pool critically low (<100 seeds), error spikes
 
 ## Testing
 
@@ -533,15 +573,15 @@ Typical latency breakdown for a single DNS resolution (local Docker, ML-DSA-65, 
 | Verification | 0.2-1.0 ms | Cached verifier instance reduces by ~0.3 ms |
 | **Total** | **7-22 ms** | Dominated by DNS lookup |
 
-**Seed consumption rate:** At 1 query/second, the pool consumes 86,400 seeds/day. With Lambda generating ~1,500 seeds per 5-minute invocation, the pool sustains ~2 queries/second continuously.
+**Seed consumption rate:** At 1 query/second, the pool consumes 86,400 seeds/day. With the QRNG background task generating ~1,500 seeds per 5-minute invocation, the pool sustains ~2 queries/second continuously.
 
 **Scheme comparison (sign + verify):**
 
 | Scheme | Sign (ms) | Verify (ms) | Signature Size | NIST Level |
 |--------|----------|-------------|----------------|------------|
-| ML-DSA-65 | 1-3 | 0.2-0.5 | 3,293 B | 3 |
+| ML-DSA-65 | 1-3 | 0.2-0.5 | 3,309 B | 3 |
 | Falcon-512 | 0.3-1.0 | 0.1-0.3 | 666 B | 1 |
-| SLH-DSA-128 | 30-80 | 1-3 | 7,856 B | 1 |
+| SLH-DSA-SHA2-128s | 30-80 | 1-3 | 7,856 B | 1 |
 | RSA-2048 | 0.01-0.05 | 0.01-0.03 | 256 B | Classical |
 
 ## Security Considerations
@@ -586,11 +626,11 @@ If the Streamlit dashboard can't reach the API, ensure `API_URL=http://localhost
 
 - **Backend**: FastAPI, uvicorn
 - **Frontend**: Streamlit
-- **Crypto**: liboqs (ML-DSA-65, Falcon-512, SLH-DSA-128), oqs-python
+- **Crypto**: liboqs (ML-DSA-65, Falcon-512, SLH-DSA-SHA2-128s), oqs-python
 - **Quantum**: Qiskit 2.x, qiskit-aer (AerSimulator), optional IBM Quantum
 - **AI**: OpenAI API (GPT-4o-mini)
 - **State**: Redis (ElastiCache in AWS)
-- **Infra**: AWS CDK, ECS Fargate, Lambda, ALB, S3, CloudWatch, SNS
+- **Infra**: AWS CDK, ECS Fargate, ALB, CloudFront, S3, CloudWatch, SNS
 - **Container**: Docker multi-stage build
 
 ## References
@@ -638,13 +678,13 @@ This concern is valid and worth quantifying:
 | Scheme | Sign (ms) | Verify (ms) | Signature Size | NIST Level |
 |--------|----------|-------------|----------------|------------|
 | RSA-2048 | 0.01–0.05 | 0.01–0.03 | 256 B | 0 (vulnerable) |
-| ML-DSA-65 | 1–3 | 0.2–0.5 | 3,293 B | 3 |
+| ML-DSA-65 | 1–3 | 0.2–0.5 | 3,309 B | 3 |
 | Falcon-512 | 0.3–1.0 | 0.1–0.3 | 666 B | 1 |
-| SLH-DSA-128 | 30–80 | 1–3 | 7,856 B | 1 |
+| SLH-DSA-SHA2-128s | 30–80 | 1–3 | 7,856 B | 1 |
 
 A typical DNS lookup takes **5–15 ms** (upstream resolver dependent). ML-DSA-65 signing adds ~1–3 ms — a 10–30% overhead in the signing step, but DNS lookup still dominates the total. Falcon-512 at 0.3–1 ms is nearly indistinguishable from RSA in the total query budget.
 
-**SLH-DSA-128 is the outlier**: its 30–80 ms signing time makes it impractical for high-throughput online DNS signing, but it is appropriate for *offline zone signing* (pre-signing DNS records in advance) where speed is not a constraint. Its conservative hash-based design (no lattice assumptions) makes it attractive for maximum-assurance use cases.
+**SLH-DSA-SHA2-128s is the outlier**: its 30–80 ms signing time makes it impractical for high-throughput online DNS signing, but it is appropriate for *offline zone signing* (pre-signing DNS records in advance) where speed is not a constraint. Its conservative hash-based design (no lattice assumptions) makes it attractive for maximum-assurance use cases.
 
 More broadly: NIST standardized these algorithms knowing they would replace RSA/ECC across all of TLS, PKI, and DNSSEC. Browser makers, CDNs, and cloud providers are already deploying ML-KEM (the key exchange counterpart) in production TLS. Cloudflare and Google have run PQ TLS experiments at scale with acceptable overhead. The latency argument applies equally to TLS handshakes and certificate issuance — and industry has concluded the tradeoff is acceptable given the 10-year threat window.
 
@@ -669,6 +709,22 @@ The key caveat: the seed is **deterministic given sufficient system observation*
 When the pool is empty (PRNG fallback), the system remains functionally correct but loses the information-theoretic guarantee. The dashboard displays pool size and QRNG hit rate so this is always visible.
 
 For the purposes of this demo: QRNG also illustrates a key architectural point — **quantum technology appears on both sides of the security equation**, as both a threat (Shor's algorithm) and a defense tool (quantum randomness). This duality is central to why post-quantum cryptography requires holistic thinking, not just algorithm swaps.
+
+---
+
+## What We Learned
+
+Building Quantum DNS Shield in a hackathon compressed months of learning into a single weekend. Whether or not the full AWS deployment was standing at demo time, every component taught us something concrete:
+
+- **Infrastructure-as-code with AWS CDK** — We defined a production-grade multi-service architecture (VPC, ECS Fargate, ElastiCache, ALB, CloudFront, S3, Secrets Manager, CloudWatch, SNS) entirely in Python. The CDK stack taught us how cloud services are wired together — networking, security groups, IAM roles, service discovery — and why infrastructure should be versioned and reproducible.
+
+- **Post-quantum cryptography is practical today** — Integrating liboqs and the NIST-standardized schemes (ML-DSA-65/FIPS 204, SLH-DSA/FIPS 205, Falcon/FIPS 206 draft) showed us that PQ migration is not a theoretical exercise. The performance overhead is measurable but acceptable — ML-DSA-65 signing adds ~1–3 ms to a DNS query that already takes 5–15 ms for the upstream lookup. Crypto-agility (swapping schemes at runtime via toggles) is the key design principle.
+
+- **Quantum computing fundamentals via Qiskit** — We built real quantum circuits: Hadamard-gate QRNG pipelines, Shor's algorithm with programmatic modular-multiplication unitaries, and quantum phase estimation. We learned the gap between textbook quantum algorithms and practical implementation — managing qubit counts, shot budgets, circuit depth, and classical post-processing.
+
+- **Entropy extraction is non-trivial** — Generating raw random bits from quantum measurements is only the first step. We implemented four extraction algorithms (Von Neumann debiasing, Toeplitz universal hashing, FFT whitening, parity reduction) and validated output quality with statistical tests (Shannon entropy, chi-squared, serial correlation, runs test). Each extractor makes different throughput-vs-quality tradeoffs.
+
+- **The HNDL threat is real and urgent** — Building the Attack Theater and security margin analysis made the Harvest-Now, Decrypt-Later threat concrete. Data encrypted with RSA today can be recorded by adversaries and decrypted when quantum computers mature. The migration window is now, not when CRQCs arrive.
 
 ---
 
