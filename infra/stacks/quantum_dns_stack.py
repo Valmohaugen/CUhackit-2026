@@ -1,8 +1,11 @@
-"""Full CDK stack for Quantum DNS Shield (Option 2.5).
+"""CDK stack for Quantum DNS Shield.
 
-Deploys: VPC, ALB (HTTP or HTTPS), ECS Fargate, ElastiCache Redis,
-Lambda QRNG generator, S3 audit bucket, Secrets Manager, CloudWatch
-dashboard, SNS alerting.
+Deploys: VPC, ALB (HTTP), CloudFront (HTTPS + custom domain), ECS Fargate,
+ElastiCache Redis, S3 audit bucket, Secrets Manager, CloudWatch dashboard,
+SNS alerting.
+
+QRNG seed generation runs as a background task inside the FastAPI container
+(no separate Lambda needed).
 """
 
 from __future__ import annotations
@@ -19,10 +22,6 @@ from aws_cdk import (
     aws_ecs as ecs,
     aws_elasticache as elasticache,
     aws_elasticloadbalancingv2 as elbv2,
-    aws_events as events,
-    aws_events_targets as targets,
-    aws_iam as iam,
-    aws_lambda as lambda_,
     aws_logs as logs,
     aws_s3 as s3,
     aws_secretsmanager as secretsmanager,
@@ -37,14 +36,14 @@ class QuantumDNSStack(Stack):
     def __init__(self, scope: Construct, id: str, **kwargs) -> None:
         super().__init__(scope, id, **kwargs)
 
-        # Optional HTTPS: pass -c certificate_arn=arn:aws:acm:...
+        # Optional HTTPS custom domain: pass -c certificate_arn=arn:aws:acm:...
         certificate_arn = self.node.try_get_context("certificate_arn")
 
         # ── VPC ──────────────────────────────────────────────────────
         vpc = ec2.Vpc(
             self,
             "VPC",
-            max_azs=2,  # Cross-AZ redundancy for high availability
+            max_azs=2,
             nat_gateways=1,
             subnet_configuration=[
                 ec2.SubnetConfiguration(name="Public", subnet_type=ec2.SubnetType.PUBLIC),
@@ -67,19 +66,16 @@ class QuantumDNSStack(Stack):
         sg_alb = ec2.SecurityGroup(self, "SGAlb", vpc=vpc, description="ALB")
         sg_app = ec2.SecurityGroup(self, "SGApp", vpc=vpc, description="ECS tasks")
         sg_redis = ec2.SecurityGroup(self, "SGRedis", vpc=vpc, description="Redis")
-        sg_lambda = ec2.SecurityGroup(self, "SGLambda", vpc=vpc, description="Lambda")
 
-        # ALB inbound
-        sg_alb.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(443), "HTTPS")
+        # ALB inbound (HTTP only — CloudFront terminates TLS)
         sg_alb.add_ingress_rule(ec2.Peer.any_ipv4(), ec2.Port.tcp(80), "HTTP")
 
         # App from ALB
         sg_app.add_ingress_rule(sg_alb, ec2.Port.tcp(8501), "Streamlit from ALB")
         sg_app.add_ingress_rule(sg_alb, ec2.Port.tcp(8000), "FastAPI from ALB")
 
-        # Redis from app + lambda
+        # Redis from app
         sg_redis.add_ingress_rule(sg_app, ec2.Port.tcp(6379), "Redis from ECS")
-        sg_redis.add_ingress_rule(sg_lambda, ec2.Port.tcp(6379), "Redis from Lambda")
 
         # ── Secrets Manager ──────────────────────────────────────────
         ibm_token = secretsmanager.Secret(
@@ -93,6 +89,9 @@ class QuantumDNSStack(Stack):
                 exclude_punctuation=True, password_length=32
             ),
         )
+        openai_key = secretsmanager.Secret(
+            self, "OpenAIKey", secret_name="quantum-dns/openai-key"
+        )
 
         # ── ElastiCache Redis ────────────────────────────────────────
         redis_subnet_group = elasticache.CfnSubnetGroup(
@@ -105,7 +104,7 @@ class QuantumDNSStack(Stack):
         redis_cluster = elasticache.CfnCacheCluster(
             self,
             "Redis",
-            cache_node_type="cache.t4g.medium",  # More memory/throughput for 10+ users
+            cache_node_type="cache.t4g.medium",
             engine="redis",
             num_cache_nodes=1,
             vpc_security_group_ids=[sg_redis.security_group_id],
@@ -157,12 +156,17 @@ class QuantumDNSStack(Stack):
                 "REDIS_HOST": redis_cluster.attr_redis_endpoint_address,
                 "REDIS_PORT": redis_cluster.attr_redis_endpoint_port,
                 "API_URL": "http://localhost:8000",
+                "AUDIT_BUCKET": audit_bucket.bucket_name,
             },
             secrets={
                 "IBM_QUANTUM_TOKEN": ecs.Secret.from_secrets_manager(ibm_token),
                 "REDIS_PASSWORD": ecs.Secret.from_secrets_manager(redis_auth),
+                "OPENAI_API_KEY": ecs.Secret.from_secrets_manager(openai_key),
             },
         )
+
+        # Grant ECS task write access to audit bucket
+        audit_bucket.grant_write(task_def.task_role)
 
         container.add_port_mappings(
             ecs.PortMapping(container_port=8501),
@@ -174,15 +178,15 @@ class QuantumDNSStack(Stack):
             "Service",
             cluster=cluster,
             task_definition=task_def,
-            desired_count=3,  # Baseline for 10+ concurrent users
+            desired_count=1,
             security_groups=[sg_app],
             assign_public_ip=False,
         )
 
         # ── ECS Auto-Scaling ───────────────────────────────────────
         scaling = service.auto_scale_task_count(
-            min_capacity=3,
-            max_capacity=6,
+            min_capacity=1,
+            max_capacity=2,
         )
         scaling.scale_on_cpu_utilization(
             "CpuScaling",
@@ -191,27 +195,12 @@ class QuantumDNSStack(Stack):
             scale_out_cooldown=Duration.seconds(30),
         )
 
-        # ── ALB ──────────────────────────────────────────────────────
+        # ── ALB (HTTP only — CloudFront handles HTTPS) ──────────────
         alb = elbv2.ApplicationLoadBalancer(
             self, "ALB", vpc=vpc, internet_facing=True, security_group=sg_alb
         )
 
-        # HTTPS or HTTP listener
-        if certificate_arn:
-            cert = acm.Certificate.from_certificate_arn(self, "Cert", certificate_arn)
-            listener = alb.add_listener(
-                "HTTPS", port=443, certificates=[cert]
-            )
-            # HTTP redirect to HTTPS
-            alb.add_listener(
-                "HTTPRedirect",
-                port=80,
-                action=elbv2.ListenerAction.redirect(
-                    protocol="HTTPS", port="443", permanent=True
-                ),
-            )
-        else:
-            listener = alb.add_listener("HTTP", port=80)
+        listener = alb.add_listener("HTTP", port=80)
 
         # API target group (port 8000)
         listener.add_targets(
@@ -235,39 +224,6 @@ class QuantumDNSStack(Stack):
             ],
             health_check=elbv2.HealthCheck(path="/_stcore/health", port="8501"),
             stickiness_cookie_duration=Duration.hours(1),
-        )
-
-        # ── Lambda: QRNG Generator ──────────────────────────────────
-        qrng_lambda = lambda_.Function(
-            self,
-            "QRNGGenerator",
-            runtime=lambda_.Runtime.PYTHON_3_11,
-            handler="handler.lambda_handler",
-            code=lambda_.Code.from_asset("../src/lambda_handler"),
-            memory_size=2048,  # More memory = more CPU = faster Qiskit execution
-            timeout=Duration.minutes(5),
-            vpc=vpc,
-            vpc_subnets=ec2.SubnetSelection(
-                subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
-            ),
-            security_groups=[sg_lambda],
-            environment={
-                "REDIS_HOST": redis_cluster.attr_redis_endpoint_address,
-                "REDIS_PORT": redis_cluster.attr_redis_endpoint_port,
-                "AUDIT_BUCKET": audit_bucket.bucket_name,
-            },
-        )
-
-        ibm_token.grant_read(qrng_lambda)
-        redis_auth.grant_read(qrng_lambda)
-        audit_bucket.grant_write(qrng_lambda)
-
-        # Schedule: every 5 minutes
-        events.Rule(
-            self,
-            "QRNGSchedule",
-            schedule=events.Schedule.rate(Duration.minutes(5)),
-            targets=[targets.LambdaFunction(qrng_lambda)],
         )
 
         # ── SNS Alerting ────────────────────────────────────────────
@@ -294,33 +250,6 @@ class QuantumDNSStack(Stack):
         )
         pool_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
 
-        # Lambda error alarm
-        lambda_errors_alarm = cloudwatch.Alarm(
-            self,
-            "LambdaErrors",
-            metric=qrng_lambda.metric_errors(period=Duration.minutes(5)),
-            threshold=1,
-            evaluation_periods=1,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
-            alarm_description="QRNG Lambda function errors detected",
-        )
-        lambda_errors_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
-
-        # Lambda duration approaching timeout (4 min out of 5 min timeout)
-        lambda_duration_alarm = cloudwatch.Alarm(
-            self,
-            "LambdaDuration",
-            metric=qrng_lambda.metric_duration(
-                period=Duration.minutes(5),
-                statistic="Maximum",
-            ),
-            threshold=240_000,  # 4 minutes in milliseconds
-            evaluation_periods=1,
-            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
-            alarm_description="QRNG Lambda duration approaching timeout",
-        )
-        lambda_duration_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
-
         # ── CloudWatch Dashboard ────────────────────────────────────
         dashboard = cloudwatch.Dashboard(
             self, "Dashboard", dashboard_name="QuantumDNSShield"
@@ -338,20 +267,14 @@ class QuantumDNSStack(Stack):
                 width=12,
             ),
             cloudwatch.GraphWidget(
-                title="Lambda Duration",
-                left=[qrng_lambda.metric_duration(period=Duration.minutes(5))],
-                width=12,
-            ),
-        )
-        dashboard.add_widgets(
-            cloudwatch.GraphWidget(
-                title="Lambda Errors",
-                left=[qrng_lambda.metric_errors(period=Duration.minutes(5))],
-                width=12,
-            ),
-            cloudwatch.GraphWidget(
-                title="Lambda Invocations",
-                left=[qrng_lambda.metric_invocations(period=Duration.minutes(5))],
+                title="ALB Request Count",
+                left=[cloudwatch.Metric(
+                    namespace="AWS/ApplicationELB",
+                    metric_name="RequestCount",
+                    dimensions_map={"LoadBalancer": alb.load_balancer_full_name},
+                    statistic="Sum",
+                    period=Duration.minutes(1),
+                )],
                 width=12,
             ),
         )
@@ -371,44 +294,48 @@ class QuantumDNSStack(Stack):
             ),
         )
 
-        # ── CloudFront CDN ─────────────────────────────────────────
-        cdn = cloudfront.Distribution(
-            self,
-            "CDN",
+        # ── CloudFront CDN (HTTPS termination) ──────────────────────
+        alb_origin = origins.LoadBalancerV2Origin(
+            alb, protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY
+        )
+
+        cf_kwargs: dict = dict(
             default_behavior=cloudfront.BehaviorOptions(
-                origin=origins.LoadBalancerV2Origin(
-                    alb, protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY
-                ),
+                origin=alb_origin,
                 viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
                 cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
                 origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER,
+                allowed_methods=cloudfront.AllowedMethods.ALLOW_ALL,
             ),
-            additional_behaviors={
-                "/_stcore/*": cloudfront.BehaviorOptions(
-                    origin=origins.LoadBalancerV2Origin(
-                        alb, protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY
-                    ),
-                    cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
-                ),
-            },
         )
 
+        if certificate_arn:
+            cert = acm.Certificate.from_certificate_arn(self, "Cert", certificate_arn)
+            cf_kwargs["domain_names"] = ["qdns.valmohaugen.com"]
+            cf_kwargs["certificate"] = cert
+
+        cdn = cloudfront.Distribution(self, "CDN", **cf_kwargs)
+
         # ── Outputs ──────────────────────────────────────────────────
-        protocol = "https" if certificate_arn else "http"
         CfnOutput(
             self,
             "DashboardURL",
-            value=f"{protocol}://{alb.load_balancer_dns_name}",
+            value=f"https://{cdn.distribution_domain_name}",
         )
         CfnOutput(
             self,
             "APIURL",
-            value=f"{protocol}://{alb.load_balancer_dns_name}/api",
+            value=f"https://{cdn.distribution_domain_name}/api",
         )
         CfnOutput(
             self,
             "ALBDnsName",
             value=alb.load_balancer_dns_name,
-            description="Use this for CNAME record in Namecheap",
+            description="Internal ALB (HTTP only)",
         )
-        CfnOutput(self, "CloudFrontURL", value=f"https://{cdn.distribution_domain_name}")
+        CfnOutput(
+            self,
+            "CloudFrontDomain",
+            value=cdn.distribution_domain_name,
+            description="Add CNAME: qdns.valmohaugen.com -> this value",
+        )
