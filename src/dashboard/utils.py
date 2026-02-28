@@ -15,6 +15,7 @@ API_BASE = os.getenv("API_URL", "http://localhost:8000")
 TIMEOUT = 10.0
 
 
+# All API calls use a thin synchronous httpx wrapper so Streamlit components stay simple and blocking
 def _get(path: str) -> dict | list | None:
     """GET request to FastAPI backend."""
     try:
@@ -36,7 +37,7 @@ def _post(path: str, json_data: dict | None = None) -> dict | list | None:
 
 
 # ---------------------------------------------------------------------------
-# Typed API methods
+# Typed API methods — each function maps 1:1 to a FastAPI endpoint, keeping callers decoupled from URL paths
 # ---------------------------------------------------------------------------
 
 def get_health() -> dict | None:
@@ -81,3 +82,16 @@ def get_benchmarks() -> list | None:
 
 def get_migration() -> dict | None:
     return _get("/api/migration")
+
+
+def get_history(limit: int = 200) -> list | None:
+    return _get(f"/api/metrics/history?limit={limit}")
+
+
+def resolve_with_options(domain: str, scheme: str | None = None, source: str | None = None) -> dict | None:
+    payload: dict = {"domain": domain}
+    if scheme:
+        payload["scheme"] = scheme
+    if source:
+        payload["source"] = source
+    return _post("/api/resolve", payload)

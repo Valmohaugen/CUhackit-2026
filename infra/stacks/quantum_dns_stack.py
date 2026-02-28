@@ -1,7 +1,8 @@
 """Full CDK stack for Quantum DNS Shield (Option 2.5).
 
 Deploys: VPC, ALB (HTTP or HTTPS), ECS Fargate, ElastiCache Redis,
-Lambda QRNG generator, S3 audit bucket, Secrets Manager, CloudWatch.
+Lambda QRNG generator, S3 audit bucket, Secrets Manager, CloudWatch
+dashboard, SNS alerting.
 """
 
 from __future__ import annotations
@@ -25,7 +26,10 @@ from aws_cdk import (
     aws_logs as logs,
     aws_s3 as s3,
     aws_secretsmanager as secretsmanager,
+    aws_sns as sns,
+    aws_cloudwatch_actions as cw_actions,
 )
+from aws_cdk import aws_cloudfront as cloudfront, aws_cloudfront_origins as origins
 from constructs import Construct
 
 
@@ -40,7 +44,7 @@ class QuantumDNSStack(Stack):
         vpc = ec2.Vpc(
             self,
             "VPC",
-            max_azs=1,
+            max_azs=2,  # Cross-AZ redundancy for high availability
             nat_gateways=1,
             subnet_configuration=[
                 ec2.SubnetConfiguration(name="Public", subnet_type=ec2.SubnetType.PUBLIC),
@@ -101,7 +105,7 @@ class QuantumDNSStack(Stack):
         redis_cluster = elasticache.CfnCacheCluster(
             self,
             "Redis",
-            cache_node_type="cache.t4g.small",
+            cache_node_type="cache.t4g.medium",  # More memory/throughput for 10+ users
             engine="redis",
             num_cache_nodes=1,
             vpc_security_group_ids=[sg_redis.security_group_id],
@@ -170,9 +174,21 @@ class QuantumDNSStack(Stack):
             "Service",
             cluster=cluster,
             task_definition=task_def,
-            desired_count=2,
+            desired_count=3,  # Baseline for 10+ concurrent users
             security_groups=[sg_app],
             assign_public_ip=False,
+        )
+
+        # ── ECS Auto-Scaling ───────────────────────────────────────
+        scaling = service.auto_scale_task_count(
+            min_capacity=3,
+            max_capacity=6,
+        )
+        scaling.scale_on_cpu_utilization(
+            "CpuScaling",
+            target_utilization_percent=60,
+            scale_in_cooldown=Duration.seconds(60),
+            scale_out_cooldown=Duration.seconds(30),
         )
 
         # ── ALB ──────────────────────────────────────────────────────
@@ -218,6 +234,7 @@ class QuantumDNSStack(Stack):
                 service.load_balancer_target(container_name="App", container_port=8501)
             ],
             health_check=elbv2.HealthCheck(path="/_stcore/health", port="8501"),
+            stickiness_cookie_duration=Duration.hours(1),
         )
 
         # ── Lambda: QRNG Generator ──────────────────────────────────
@@ -227,7 +244,7 @@ class QuantumDNSStack(Stack):
             runtime=lambda_.Runtime.PYTHON_3_11,
             handler="handler.lambda_handler",
             code=lambda_.Code.from_asset("../src/lambda_handler"),
-            memory_size=1024,
+            memory_size=2048,  # More memory = more CPU = faster Qiskit execution
             timeout=Duration.minutes(5),
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(
@@ -249,12 +266,19 @@ class QuantumDNSStack(Stack):
         events.Rule(
             self,
             "QRNGSchedule",
-            schedule=events.Schedule.rate(Duration.minutes(5)),
+            schedule=events.Schedule.rate(Duration.minutes(2)),
             targets=[targets.LambdaFunction(qrng_lambda)],
         )
 
+        # ── SNS Alerting ────────────────────────────────────────────
+        alert_topic = sns.Topic(
+            self,
+            "AlertTopic",
+            display_name="Quantum DNS Shield Alerts",
+        )
+
         # ── CloudWatch Alarms ────────────────────────────────────────
-        cloudwatch.Alarm(
+        pool_alarm = cloudwatch.Alarm(
             self,
             "PoolCritical",
             metric=cloudwatch.Metric(
@@ -267,6 +291,106 @@ class QuantumDNSStack(Stack):
             evaluation_periods=1,
             comparison_operator=cloudwatch.ComparisonOperator.LESS_THAN_THRESHOLD,
             alarm_description="QRNG seed pool critically low",
+        )
+        pool_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
+
+        # Lambda error alarm
+        lambda_errors_alarm = cloudwatch.Alarm(
+            self,
+            "LambdaErrors",
+            metric=qrng_lambda.metric_errors(period=Duration.minutes(5)),
+            threshold=1,
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+            alarm_description="QRNG Lambda function errors detected",
+        )
+        lambda_errors_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
+
+        # Lambda duration approaching timeout (4 min out of 5 min timeout)
+        lambda_duration_alarm = cloudwatch.Alarm(
+            self,
+            "LambdaDuration",
+            metric=qrng_lambda.metric_duration(
+                period=Duration.minutes(5),
+                statistic="Maximum",
+            ),
+            threshold=240_000,  # 4 minutes in milliseconds
+            evaluation_periods=1,
+            comparison_operator=cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+            alarm_description="QRNG Lambda duration approaching timeout",
+        )
+        lambda_duration_alarm.add_alarm_action(cw_actions.SnsAction(alert_topic))
+
+        # ── CloudWatch Dashboard ────────────────────────────────────
+        dashboard = cloudwatch.Dashboard(
+            self, "Dashboard", dashboard_name="QuantumDNSShield"
+        )
+
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="QRNG Pool Size",
+                left=[cloudwatch.Metric(
+                    namespace="QuantumDNSShield",
+                    metric_name="qrng/PoolSize",
+                    statistic="Average",
+                    period=Duration.minutes(5),
+                )],
+                width=12,
+            ),
+            cloudwatch.GraphWidget(
+                title="Lambda Duration",
+                left=[qrng_lambda.metric_duration(period=Duration.minutes(5))],
+                width=12,
+            ),
+        )
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="Lambda Errors",
+                left=[qrng_lambda.metric_errors(period=Duration.minutes(5))],
+                width=12,
+            ),
+            cloudwatch.GraphWidget(
+                title="Lambda Invocations",
+                left=[qrng_lambda.metric_invocations(period=Duration.minutes(5))],
+                width=12,
+            ),
+        )
+        dashboard.add_widgets(
+            cloudwatch.GraphWidget(
+                title="ECS CPU Utilization",
+                left=[service.metric_cpu_utilization(period=Duration.minutes(1))],
+                width=12,
+            ),
+            cloudwatch.GraphWidget(
+                title="ECS Task Count",
+                left=[service.metric("RunningTaskCount",
+                    statistic="Average",
+                    period=Duration.minutes(1),
+                )],
+                width=12,
+            ),
+        )
+
+        # ── CloudFront CDN ─────────────────────────────────────────
+        cdn = cloudfront.Distribution(
+            self,
+            "CDN",
+            default_behavior=cloudfront.BehaviorOptions(
+                origin=origins.LoadBalancerV2Origin(
+                    alb, protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY
+                ),
+                viewer_protocol_policy=cloudfront.ViewerProtocolPolicy.REDIRECT_TO_HTTPS,
+                cache_policy=cloudfront.CachePolicy.CACHING_DISABLED,
+                origin_request_policy=cloudfront.OriginRequestPolicy.ALL_VIEWER,
+            ),
+            additional_behaviors={
+                "/_stcore/*": cloudfront.BehaviorOptions(
+                    origin=origins.LoadBalancerV2Origin(
+                        alb, protocol_policy=cloudfront.OriginProtocolPolicy.HTTP_ONLY
+                    ),
+                    cache_policy=cloudfront.CachePolicy.CACHING_OPTIMIZED,
+                ),
+            },
         )
 
         # ── Outputs ──────────────────────────────────────────────────
@@ -287,3 +411,4 @@ class QuantumDNSStack(Stack):
             value=alb.load_balancer_dns_name,
             description="Use this for CNAME record in Namecheap",
         )
+        CfnOutput(self, "CloudFrontURL", value=f"https://{cdn.distribution_domain_name}")

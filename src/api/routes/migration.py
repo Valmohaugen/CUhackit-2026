@@ -20,6 +20,7 @@ async def get_migration(request: Request) -> dict:
     r = request.app.state.redis
     scenario = await r.get(RedisKeys.CONFIG_SCENARIO) or "enterprise"
 
+    # Response includes the full scheme-vs-phase matrix, the active recommendation, and all scenarios.
     return {
         "matrix": get_migration_matrix(),
         "recommendation": get_recommendation(scenario),

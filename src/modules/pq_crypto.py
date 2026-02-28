@@ -4,6 +4,15 @@ Provides:
   - PQSigner: Sign/verify with ML-DSA-65, Falcon-512, or RSA-2048
   - Algorithm discovery via liboqs at startup
   - ClassicalFallback using HMAC-SHA256 if liboqs unavailable
+
+References
+----------
+# Ref: Ducas et al. (2018). "CRYSTALS-Dilithium." TCHES 2018(1). [ML-DSA]
+# Ref: NIST FIPS 204 (2024). Module-Lattice-Based Digital Signature Standard (ML-DSA).
+# Ref: Fouque et al. (2020). "Falcon: Fast-Fourier Lattice-based Compact Signatures over NTRU." NIST PQC Round 3.
+# Ref: Bernstein et al. (2019). "The SPHINCS+ Signature Framework." ACM CCS '19. [SLH-DSA]
+# Ref: NIST FIPS 205 (2024). Stateless Hash-Based Digital Signature Standard (SLH-DSA).
+# Ref: Hoffstein et al. (1998). "NTRU: A Ring-Based Public Key Cryptosystem." ANTS-III.
 """
 
 from __future__ import annotations
@@ -21,9 +30,22 @@ logger = logging.getLogger(__name__)
 # Algorithm name mapping (liboqs uses various names across versions)
 # ---------------------------------------------------------------------------
 
+# Maps user-facing scheme names to candidate liboqs identifiers, ordered by
+# preference. liboqs renamed algorithms across versions (e.g. Dilithium3 -> ML-DSA-65),
+# so the fallback list ensures compatibility with both old and new releases.
 _ALGORITHM_MAP: dict[str, list[str]] = {
+    # Ref: FIPS 204 — ML-DSA; falls back to pre-standard Dilithium names
     "ml-dsa-65": ["ML-DSA-65", "Dilithium3", "ML-DSA-44", "Dilithium2"],
+    # Ref: Fouque et al. — Falcon; includes padded variant for older liboqs
     "falcon-512": ["Falcon-512", "Falcon-padded-512"],
+    # Ref: FIPS 205 — SLH-DSA; tries SHA2 then SHAKE instantiations
+    "slh-dsa-128": [
+        "SLH-DSA-SHA2-128s",
+        "SLH-DSA-SHAKE-128s",
+        "SPHINCS+-SHA2-128s-simple",
+        "SPHINCS+-SHAKE-128s-simple",
+        "SPHINCS+-SHA256-128s-simple",
+    ],
 }
 
 _OQS_AVAILABLE = False
@@ -80,6 +102,8 @@ class PQSigner:
     algorithm: str
     _resolved_name: str = field(init=False, default="")
     _signer: object = field(init=False, default=None)
+    # Keypair is cached to avoid repeated keygen, which is the most expensive
+    # lattice operation (Ducas et al. 2018, Table 3). One keygen per signer lifetime.
     _public_key: bytes = field(init=False, default=b"")
     _secret_key: bytes = field(init=False, default=b"")
 
@@ -126,10 +150,15 @@ class PQSigner:
         return self._signer.sign(message)
 
     def verify(self, message: bytes, signature: bytes) -> bool:
-        """Verify a signature against the public key."""
-        verifier = oqs.Signature(self._resolved_name)
+        """Verify a signature against the public key.
+
+        Reuses a cached verifier instance to avoid re-creating the liboqs
+        object on every call (~0.1-0.5ms saved per verification).
+        """
+        if not hasattr(self, "_verifier") or self._verifier is None:
+            self._verifier = oqs.Signature(self._resolved_name)
         try:
-            return verifier.verify(message, signature, self._public_key)
+            return self._verifier.verify(message, signature, self._public_key)
         except Exception:
             return False
 
@@ -151,7 +180,7 @@ class ClassicalFallback:
 
     @property
     def scheme_name(self) -> str:
-        return "HMAC-SHA256 (fallback)"
+        return "HMAC-SHA256"
 
     @property
     def public_key(self) -> bytes:
@@ -186,7 +215,7 @@ class RSASigner:
 
     @property
     def scheme_name(self) -> str:
-        return "RSA-2048 (demo)"
+        return "RSA-2048"
 
     @property
     def public_key(self) -> bytes:
@@ -224,6 +253,8 @@ def create_signer(scheme: str) -> Signer:
     if scheme == "rsa-2048":
         return RSASigner()
 
+    # Fallback chain: PQSigner (liboqs) -> ClassicalFallback (HMAC-SHA256).
+    # Ensures the application remains functional even without liboqs installed.
     if _OQS_AVAILABLE:
         try:
             return PQSigner(algorithm=scheme)

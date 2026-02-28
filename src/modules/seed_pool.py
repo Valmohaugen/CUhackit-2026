@@ -4,6 +4,10 @@ Provides:
   - get_seed: Consume a seed from the Redis QRNG pool or fall back to os.urandom
   - get_pool_size: Check current pool depth
   - SeedSource enum for tracking provenance
+
+References
+----------
+# Ref: Herrero-Collantes & Garcia-Escartin (2017). "Quantum Random Number Generators." Rev. Mod. Phys. 89, 015004.
 """
 
 from __future__ import annotations
@@ -62,7 +66,8 @@ async def get_seed(r: aioredis.Redis, force_prng: bool = False) -> tuple[bytes, 
     except Exception as e:
         logger.warning("[seed_pool] Redis error during LPOP: %s", e)
 
-    # Fallback to PRNG
+    # Fallback to PRNG: os.urandom draws from the OS CSPRNG (/dev/urandom or CryptGenRandom),
+    # which is cryptographically secure though not quantum-random (Herrero-Collantes 2017, Sec. II).
     seed = os.urandom(32)
     await _safe_incr(r, RedisKeys.RESOLVER_FALLBACK_COUNT)
     logger.info("[seed_pool] PRNG fallback (pool empty or Redis error)")

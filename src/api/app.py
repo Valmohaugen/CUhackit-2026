@@ -28,7 +28,7 @@ async def lifespan(app: FastAPI):
     logger.info("[api] Starting Quantum DNS Shield API")
     r = await get_redis()
     await init_defaults(r)
-    app.state.redis = r
+    app.state.redis = r  # Stored on app.state so every route handler can access it via request.app.state.redis.
     logger.info("[api] Redis initialized with defaults")
 
     yield
@@ -56,9 +56,10 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Register routes
+    # Lazy imports inside the factory avoid circular dependencies and keep startup explicit.
     from src.api.routes.attack import router as attack_router
     from src.api.routes.benchmarks import router as benchmarks_router
+    from src.api.routes.chatbot import router as chatbot_router
     from src.api.routes.config_routes import router as config_router
     from src.api.routes.entropy import router as entropy_router
     from src.api.routes.health import router as health_router
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
     app.include_router(attack_router)
     app.include_router(benchmarks_router)
     app.include_router(migration_router)
+    app.include_router(chatbot_router)
 
     # Configure logging
     logging.basicConfig(

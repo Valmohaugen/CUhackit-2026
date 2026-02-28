@@ -36,6 +36,22 @@ async def get_live_metrics(request: Request) -> LiveMetrics:
     )
 
 
+@router.get("/api/metrics/history")
+async def get_history(request: Request, limit: int = 200) -> list[dict]:
+    """Get historical query data from sorted set (newest first)."""
+    r = request.app.state.redis
+    limit = min(limit, 1000)  # Query param capped at 1000 to bound Redis ZREVRANGE cost.
+
+    raw = await r.zrevrange(RedisKeys.HISTORY_QUERIES, 0, limit - 1)
+    results = []
+    for entry in raw:
+        try:
+            results.append(json.loads(entry))
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return results
+
+
 @router.get("/api/qrng/status", response_model=QRNGStatus)
 async def get_qrng_status(request: Request) -> QRNGStatus:
     """Get QRNG pool status from Redis."""

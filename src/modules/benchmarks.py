@@ -4,6 +4,10 @@ Provides:
   - run_all_benchmarks: Time keygen/sign/verify for all PQ schemes
   - compare_entropy: Statistical comparison of QRNG vs PRNG
   - EntropyComparison dataclass with test results
+
+# Ref: NIST SP 800-22 Rev. 1a (2010). "A Statistical Test Suite for Random
+#      and Pseudorandom Number Generators for Cryptographic Applications."
+#      https://csrc.nist.gov/publications/detail/sp/800-22/rev-1a/final
 """
 
 from __future__ import annotations
@@ -24,7 +28,7 @@ from src.modules.pq_crypto import BenchmarkResult, benchmark_scheme
 
 logger = logging.getLogger(__name__)
 
-SCHEMES = ["ml-dsa-65", "falcon-512", "rsa-2048"]
+SCHEMES = ["ml-dsa-65", "falcon-512", "slh-dsa-128", "rsa-2048"]
 
 
 # ---------------------------------------------------------------------------
@@ -101,15 +105,22 @@ class EntropyComparison:
     sample_size: int
 
 
+# Shannon entropy: H(X) = -Σ p_i log₂(p_i), ideal H = 1.0 for unbiased binary source
 def _shannon_entropy(data: np.ndarray) -> float:
     """Compute Shannon entropy of binary data."""
+    # Measures average information content per bit (NIST SP 800-22, Sec. 5.1).
+    # Ideal random source yields H = 1.0 bit; lower values indicate bias.
     _, counts = np.unique(data, return_counts=True)
     probabilities = counts / len(data)
     return float(stats.entropy(probabilities, base=2))
 
 
+# Chi-squared: χ² = Σ (O_i - E_i)² / E_i, tests byte uniformity (df = 255)
 def _chi_squared_test(data: np.ndarray) -> tuple[float, float]:
     """Chi-squared test for uniform distribution of bytes."""
+    # Tests whether the observed byte frequency distribution deviates from
+    # uniform (NIST SP 800-22, Sec. 5.2). A high p-value indicates the byte
+    # distribution is consistent with a truly random source.
     # Group bits into bytes
     n_bytes = len(data) // 8
     if n_bytes < 10:
@@ -130,8 +141,13 @@ def _chi_squared_test(data: np.ndarray) -> tuple[float, float]:
     return float(chi2), float(p_value)
 
 
+# Serial correlation: C = Σ(x_i - x̄)(x_{i+1} - x̄) / Σ(x_i - x̄)², ideal C ≈ 0
 def _serial_correlation(data: np.ndarray) -> float:
     """Compute serial correlation coefficient."""
+    # Measures linear dependency between consecutive values (lag-1
+    # autocorrelation). Values near zero indicate no predictable relationship
+    # between successive bits; significant deviation suggests structural
+    # patterns in the generator output (NIST SP 800-22, Sec. 5.7).
     if len(data) < 2:
         return 0.0
     x = data.astype(float)
@@ -144,8 +160,13 @@ def _serial_correlation(data: np.ndarray) -> float:
     return float(autocorr)
 
 
+# Runs test: Expected runs = 1 + 2n₀n₁/n, z = (R - E[R]) / √Var(R)
 def _runs_test(data: np.ndarray) -> float:
     """Runs test for randomness. Returns p-value."""
+    # Counts the number of uninterrupted runs of identical bits and compares
+    # to the expected count under true randomness (NIST SP 800-22, Sec. 5.3).
+    # Too few runs implies clustering; too many implies oscillation. A p-value
+    # below 0.01 rejects the null hypothesis of randomness.
     n = len(data)
     if n < 20:
         return 1.0

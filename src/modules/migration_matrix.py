@@ -1,9 +1,13 @@
 """Module 4: Post-quantum migration matrix and recommendations.
 
 Provides:
-  - get_migration_matrix: Full matrix of scenarios × phases
+  - get_migration_matrix: Full matrix of scenarios x phases
   - get_recommendation: Scenario-specific recommendation
   - Cost/benefit/risk/timeline analysis per deployment scenario
+
+# Ref: NIST (2024). "Migration to Post-Quantum Cryptography."
+#      Special Publication 1800-38C (preliminary draft).
+#      https://csrc.nist.gov/publications/detail/sp/1800-38/final
 """
 
 from __future__ import annotations
@@ -66,6 +70,12 @@ _SCHEMES_INFO = {
         "latency_factor": 1.1,
         "packet_factor": 1.8,
     },
+    "slh-dsa-128": {
+        "key_size_bytes": 32,
+        "signature_bytes": 7856,
+        "latency_factor": 8.0,
+        "packet_factor": 12.0,
+    },
     "rsa-2048": {
         "key_size_bytes": 256,
         "signature_bytes": 256,
@@ -73,6 +83,23 @@ _SCHEMES_INFO = {
         "packet_factor": 1.0,
     },
 }
+
+# ---------------------------------------------------------------------------
+# Scenario definitions
+# ---------------------------------------------------------------------------
+# Five deployment scenarios, each representing a distinct threat profile and
+# migration constraint set:
+#   1. web        - Public-facing web applications, APIs, CDNs
+#   2. iot        - Resource-constrained IoT/embedded devices (long lifespans)
+#   3. enterprise - Corporate networks, VPN, email, internal services
+#   4. critical   - Critical infrastructure (SCADA/ICS, power, healthcare)
+#   5. financial  - Banking, trading, payment processing, HSMs
+#
+# Three migration phases model the transition path (per NIST SP 1800-38C):
+#   Phase 1 "classical" - Current classical-only deployment (baseline risk)
+#   Phase 2 "hybrid"    - Dual classical + PQ algorithms for compatibility
+#   Phase 3 "pq_only"   - Full post-quantum deployment (target state)
+# ---------------------------------------------------------------------------
 
 _SCENARIO_CONFIGS = {
     "web": {

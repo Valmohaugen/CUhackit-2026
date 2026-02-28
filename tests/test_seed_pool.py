@@ -8,6 +8,7 @@ from src.config.redis_keys import RedisKeys
 from src.modules.seed_pool import SeedSource, get_pool_size, get_seed, push_seeds
 
 
+# Verifies seed retrieval: PRNG fallback on empty pool, force-PRNG bypass, and QRNG seed consumption
 @pytest.mark.asyncio
 class TestGetSeed:
     """Tests for get_seed function."""
@@ -42,6 +43,7 @@ class TestGetSeed:
         assert pool_size == 0
 
 
+# Verifies pushing seeds into the Redis-backed pool, including batch insert and empty-list edge case
 @pytest.mark.asyncio
 class TestPushSeeds:
     """Tests for push_seeds function."""
@@ -59,6 +61,7 @@ class TestPushSeeds:
         assert count == 0
 
 
+# Verifies pool size reporting for both empty and populated states
 @pytest.mark.asyncio
 class TestGetPoolSize:
     """Tests for get_pool_size function."""
@@ -73,6 +76,7 @@ class TestGetPoolSize:
         assert size == 5
 
 
+# Verifies the SeedSource enum exposes the expected "qrng" and "prng" string values
 class TestSeedSource:
     """Tests for SeedSource enum."""
 

@@ -10,6 +10,7 @@ from src.modules.benchmarks import run_all_benchmarks
 router = APIRouter()
 
 
+# Benchmarks are cached in Redis per (source, scheme) pair to avoid redundant crypto iterations.
 @router.get("/api/benchmarks")
 async def get_benchmarks(request: Request) -> list[dict]:
     """Run or retrieve cached benchmarks for all PQ schemes."""

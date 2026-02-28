@@ -17,9 +17,14 @@ async def resolve_domain(body: ResolveRequest, request: Request) -> ResolveRespo
     """Resolve a domain with PQ-signed DNS response."""
     r = request.app.state.redis
 
-    # Read current config toggles
-    source = await r.get(RedisKeys.CONFIG_SOURCE) or "qrng"
-    scheme = await r.get(RedisKeys.CONFIG_SCHEME) or "ml-dsa-65"
+    # Per-request body fields override the global Redis toggles, falling back to defaults.
+    source = body.source or await r.get(RedisKeys.CONFIG_SOURCE) or "qrng"
+    scheme = body.scheme or await r.get(RedisKeys.CONFIG_SCHEME) or "ml-dsa-65"
+
+    # Client IP from ASGI scope; may be the proxy IP if behind a reverse proxy.
+    client_ip = ""
+    if request.client:
+        client_ip = request.client.host
 
     result = await resolve(
         domain=body.domain,
@@ -27,6 +32,7 @@ async def resolve_domain(body: ResolveRequest, request: Request) -> ResolveRespo
         scheme=scheme,
         use_qrng=(source == "qrng"),
         upstream=settings.dns_upstream,
+        client_ip=client_ip,
     )
 
     return ResolveResponse(**result.to_dict())

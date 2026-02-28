@@ -10,6 +10,7 @@ from src.redis_client import check_health
 router = APIRouter()
 
 
+# Returns 200 with status "ok" or "degraded" — never 5xx — so load balancers can distinguish.
 @router.get("/api/health", response_model=HealthResponse)
 async def health(request: Request) -> HealthResponse:
     """Health check — verifies Redis connectivity."""

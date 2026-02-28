@@ -7,7 +7,7 @@ echo "[entrypoint] Starting Quantum DNS Shield..."
 
 # Start FastAPI backend
 echo "[entrypoint] Starting FastAPI on :8000"
-uvicorn src.api.app:create_app --factory --host 0.0.0.0 --port 8000 &
+uvicorn src.api.app:create_app --factory --host 0.0.0.0 --port 8000 --workers 4 &
 
 # Start Streamlit dashboard
 echo "[entrypoint] Starting Streamlit on :8501"

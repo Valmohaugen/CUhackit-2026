@@ -17,6 +17,7 @@ def _clear_cache():
     clear_signer_cache()
 
 
+# Verifies end-to-end DNS resolution with mocked upstream, including PRNG fallback and QRNG seed consumption
 @pytest.mark.asyncio
 class TestResolve:
     """Tests for the resolve function."""
@@ -66,6 +67,7 @@ class TestResolve:
         assert result.seed_source == "qrng"
 
 
+# Verifies the ResolveResult dataclass serializes correctly to a dictionary
 class TestResolveResult:
     """Tests for ResolveResult dataclass."""
 

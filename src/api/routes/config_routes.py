@@ -11,6 +11,7 @@ from src.config.toggles import TOGGLES
 router = APIRouter()
 
 
+# GET reads all toggles; POST applies a partial update (only non-None fields) and returns the full state.
 @router.get("/api/config", response_model=ConfigResponse)
 async def get_config(request: Request) -> ConfigResponse:
     """Read all current toggle values from Redis."""

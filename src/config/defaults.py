@@ -10,7 +10,7 @@ from __future__ import annotations
 from src.config.toggles import TOGGLES
 
 
-# Build defaults dict: redis_key -> default_value
+# Derived from ToggleDefinition.default so toggle metadata is the single source of truth.
 DEFAULTS: dict[str, str] = {
     toggle.redis_key: toggle.default for toggle in TOGGLES.values()
 }

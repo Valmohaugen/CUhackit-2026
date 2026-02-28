@@ -3,6 +3,10 @@
 Provides:
   - resolve: Query upstream DNS, sign response with PQ crypto, log metrics
   - ResolveResult dataclass with full resolution details
+
+References
+----------
+# Ref: Mueller et al. (2020). "Retrofitting Post-Quantum Cryptography in Internet Protocols." ACM SIGCOMM CCR.
 """
 
 from __future__ import annotations
@@ -50,6 +54,8 @@ class ResolveResult:
 # Signer cache (avoid re-keygen on every request)
 # ---------------------------------------------------------------------------
 
+# PQ keygen (especially lattice-based schemes) is expensive. Caching the signer
+# amortizes the cost across requests; only sign/verify run per query.
 _signer_cache: dict[str, Signer] = {}
 
 
@@ -125,6 +131,9 @@ async def resolve(
     dns_lookup_ms = round((time.perf_counter() - t0) * 1000, 3)
 
     # Step 3: Build message to sign (domain + IPs + seed)
+    # The signed payload binds domain, resolved IPs, and the QRNG/PRNG seed together.
+    # Including the seed ensures each signature is unique even for identical lookups,
+    # preventing replay attacks (Mueller et al. 2020, Sec. 4.2).
     message = f"{domain}|{'|'.join(ip_addresses)}|{seed.hex()}".encode()
 
     # Step 4: Sign with PQ crypto

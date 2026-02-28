@@ -15,6 +15,7 @@ from src.modules.benchmarks import (
 )
 
 
+# Verifies Shannon entropy returns 1.0 for uniform binary data and 0.0 for constant data
 class TestShannonEntropy:
     """Tests for Shannon entropy calculation."""
 
@@ -31,6 +32,7 @@ class TestShannonEntropy:
         assert entropy == 0.0
 
 
+# Verifies chi-squared test handles small-sample edge cases and produces valid statistics for random data
 class TestChiSquared:
     """Tests for chi-squared uniformity test."""
 
@@ -47,6 +49,7 @@ class TestChiSquared:
         assert chi2 >= 0
 
 
+# Verifies serial correlation is near-zero for random data and handles zero-variance edge case
 class TestSerialCorrelation:
     """Tests for serial correlation."""
 
@@ -63,6 +66,7 @@ class TestSerialCorrelation:
         assert corr == 0.0  # zero variance → 0
 
 
+# Verifies the runs test produces valid p-values and degrades gracefully on tiny samples
 class TestRunsTest:
     """Tests for runs test."""
 
@@ -79,6 +83,7 @@ class TestRunsTest:
         assert p == 1.0
 
 
+# Verifies the QRNG-vs-PRNG entropy comparison returns all expected statistical fields
 @pytest.mark.asyncio
 class TestCompareEntropy:
     """Tests for entropy comparison."""
@@ -91,13 +96,14 @@ class TestCompareEntropy:
         assert result["sample_size"] == 1000
 
 
+# Verifies the full benchmark suite returns results for all four supported signature schemes
 @pytest.mark.asyncio
 class TestRunAllBenchmarks:
     """Tests for full benchmark suite."""
 
     async def test_returns_results_for_all_schemes(self, fake_redis) -> None:
         results = await run_all_benchmarks(fake_redis, iterations=2)
-        assert len(results) == 3  # ml-dsa-65, falcon-512, rsa-2048
+        assert len(results) == 4  # ml-dsa-65, falcon-512, slh-dsa-128, rsa-2048
 
         # Each result should have scheme key
         schemes = {r["scheme"] for r in results if "scheme" in r}

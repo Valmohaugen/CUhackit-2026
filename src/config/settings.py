@@ -11,6 +11,7 @@ import os
 from dataclasses import dataclass, field
 
 
+# Frozen dataclass ensures settings are immutable after construction from env vars.
 @dataclass(frozen=True)
 class Settings:
     """Application settings loaded from environment variables."""

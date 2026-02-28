@@ -37,10 +37,8 @@ async def client(api_app):
         yield c
 
 
-# Need the import at module level for the fixture decorator
-import pytest_asyncio
 
-
+# Verifies the health-check endpoint returns OK status and confirms Redis connectivity
 @pytest.mark.asyncio
 class TestHealthEndpoint:
     """Tests for GET /api/health."""
@@ -53,6 +51,7 @@ class TestHealthEndpoint:
         assert data["redis"] is True
 
 
+# Verifies reading, updating, and round-tripping configuration toggle values via the config API
 @pytest.mark.asyncio
 class TestConfigEndpoints:
     """Tests for config GET/POST endpoints."""
@@ -77,6 +76,7 @@ class TestConfigEndpoints:
         assert resp.json()["scheme"] == "falcon-512"
 
 
+# Verifies the migration endpoint returns the expected 5x3 scenario-phase matrix and a recommendation
 @pytest.mark.asyncio
 class TestMigrationEndpoint:
     """Tests for GET /api/migration."""

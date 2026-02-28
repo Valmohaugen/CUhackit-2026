@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from src.config.redis_keys import RedisKeys
 
 
+# Each toggle maps a UI-friendly name to a Redis key, valid options, and a default.
 @dataclass(frozen=True)
 class ToggleDefinition:
     """Definition of a single runtime toggle."""
@@ -41,7 +42,7 @@ TOGGLES: dict[str, ToggleDefinition] = {
     ),
     "scheme": ToggleDefinition(
         redis_key=RedisKeys.CONFIG_SCHEME,
-        options=["ml-dsa-65", "falcon-512", "rsa-2048"],
+        options=["ml-dsa-65", "falcon-512", "slh-dsa-128", "rsa-2048"],
         default="ml-dsa-65",
         label="Signature Scheme",
         description="Post-quantum or classical signature algorithm",

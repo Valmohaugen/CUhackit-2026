@@ -22,6 +22,7 @@ from src.config.redis_keys import RedisKeys
 # Fake Redis
 # ---------------------------------------------------------------------------
 
+# FakeRedis fixture: provides an in-memory Redis substitute so tests run without a real Redis server
 @pytest_asyncio.fixture
 async def fake_redis():
     """Async fakeredis client with defaults initialized."""

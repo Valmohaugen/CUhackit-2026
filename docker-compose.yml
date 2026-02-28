@@ -9,6 +9,7 @@ services:
       - REDIS_PORT=6379
       - REDIS_PASSWORD=
       - IBM_QUANTUM_TOKEN=${IBM_QUANTUM_TOKEN:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       - LOG_LEVEL=DEBUG
       - API_URL=http://localhost:8000
     depends_on:

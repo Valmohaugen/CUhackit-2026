@@ -8,6 +8,7 @@ Provides:
 from __future__ import annotations
 
 
+# All keys use a "namespace:field" convention (e.g. "config:source") to avoid collisions.
 class RedisKeys:
     """Redis key name constants."""
 
