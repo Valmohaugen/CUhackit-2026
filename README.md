@@ -6,6 +6,36 @@ Post-quantum DNS security demonstrator combining **lattice-based cryptographic s
 
 ---
 
+## Why We Built This
+
+### The Problem
+
+The internet's security stack is built on a mathematical assumption: factoring very large numbers is computationally infeasible. RSA and elliptic curve cryptography (ECC) — the algorithms protecting DNS, TLS, and digital signatures — derive their security entirely from this assumption.
+
+In 1994, Peter Shor proved that a quantum computer could factor large integers in **polynomial time** [[1]](#references). Today's quantum computers are not yet powerful enough to threaten RSA-2048, but resource estimates project that ~4,000 error-corrected logical qubits would be sufficient to break it in ~8 hours [[2]](#references). Current systems have ~1,000 noisy physical qubits. The timeline to a cryptographically relevant quantum computer (CRQC) is estimated at **2030–2040** [[3]](#references).
+
+This creates an urgent problem today — not in a decade:
+
+**Harvest-Now, Decrypt-Later (HNDL)**: Nation-state adversaries are already recording encrypted internet traffic with the intent to decrypt it once quantum computers mature. Any data encrypted with RSA or ECC that must remain secret for more than 5–10 years is at risk *right now*. Medical records, government intelligence, financial data, and long-lived TLS sessions are all being harvested.
+
+DNS is a particularly high-value target. DNS signing keys (DNSSEC), resolver-to-authoritative-server communication, and zone transfer records all use RSA or ECDSA. An attacker who records DNSSEC-signed zone data today can forge DNS responses tomorrow — enabling man-in-the-middle attacks on all downstream TLS sessions.
+
+### Our Solution
+
+NIST finalized three post-quantum cryptographic standards in 2024 (FIPS 203, 204, 205) designed to resist both classical and quantum attacks. Quantum DNS Shield demonstrates a **practical migration path** for DNS security:
+
+1. **Post-quantum DNS signing** — We perform real DNS resolution signed with NIST-standardized lattice-based and hash-based signature schemes (ML-DSA-65, Falcon-512, SLH-DSA-128), replacing the quantum-vulnerable RSA-2048 baseline. Lattice problems like Learning With Errors (LWE) have no known quantum speedup — Shor's algorithm exploits periodic structure in modular exponentiation, which lattices fundamentally lack.
+
+2. **Quantum Random Number Generation** — We generate cryptographic seeds using Qiskit quantum circuits. Unlike classical PRNGs (which are deterministic given a seed), quantum measurement outcomes are fundamentally unpredictable by the laws of physics. This provides **information-theoretic** randomness guarantees for nonce generation in PQ signature schemes.
+
+3. **Live threat analysis** — The Attack Theater demonstrates Shor's algorithm on a real quantum simulator, shows the HNDL threat timeline, and performs security margin analysis — quantifying how much protection each scheme provides against quantum attack.
+
+4. **Crypto-agility** — The dashboard lets you switch between schemes, sources, and configurations in real time, demonstrating that PQ migration does not require redesigning the system — only swapping the cryptographic module.
+
+> **The core thesis**: post-quantum migration for DNS cannot wait until quantum computers arrive. The HNDL threat exists today, NIST standards are final, and the performance overhead is acceptable. This project demonstrates all three points interactively.
+
+---
+
 ## Overview
 
 Today's internet relies on RSA and elliptic curve cryptography (ECC) to secure DNS, TLS, and digital signatures. These algorithms will be broken by a sufficiently powerful quantum computer running **Shor's algorithm** [[1]](#references). Adversaries are already performing **Harvest-Now, Decrypt-Later (HNDL)** attacks — recording encrypted traffic today with the expectation of decrypting it once large-scale quantum computers arrive [[3, 4]](#references).
@@ -592,6 +622,63 @@ If the Streamlit dashboard can't reach the API, ensure `API_URL=http://localhost
 17. Mueller, M. et al. (2020). "Retrofitting Post-Quantum Cryptography in Internet Protocols: A Case Study of DNSSEC." *ACM SIGCOMM Computer Communication Review* 50(4).
 18. NIST FIPS 203 (2024). "Module-Lattice-Based Key-Encapsulation Mechanism Standard (ML-KEM)."
 19. Peikert, C. (2016). "A Decade of Lattice Cryptography." *Foundations and Trends in Theoretical Computer Science* 10(4), pp. 283-424.
+
+## FAQ — Addressing Common Counterarguments
+
+> **Tip:** For deeper explanations, use the **AI Chat** tab in the dashboard. The assistant is trained on this project's architecture, the three NIST PQ standards, and the threat model — it can answer follow-up questions in plain language.
+
+---
+
+### "DNS resolution with RSA completes in milliseconds. An attacker can't run Shor's algorithm fast enough to intercept a live DNS response. Why does post-quantum DNS matter?"
+
+This misconception conflates **real-time attack** with **harvest-and-decrypt attack**. An adversary does not need to break DNS in real time.
+
+The threat is **Harvest-Now, Decrypt-Later (HNDL)**: adversaries record encrypted DNS traffic today — TLS-wrapped resolver queries, DNSSEC-signed zone transfers, signed resolver responses — and decrypt it once a cryptographically relevant quantum computer becomes available (estimated 2030–2040). DNS records reveal browsing behavior, internal infrastructure topology, and certificate metadata. DNSSEC itself uses RSA/ECDSA for *zone signing* — those signatures on long-lived DNS zones are exactly the kind of persistent cryptographic artifacts adversaries stockpile.
+
+DNS is also a **stepping stone**: forging a cached DNS response enables man-in-the-middle attacks on all downstream TLS sessions, authentication flows, and software updates that rely on the domain. The threat is not to the 5ms handshake — it is to the persistent signed artifacts DNS creates and the decade-long window during which they remain valid.
+
+---
+
+### "The increase in sign/verify time with post-quantum schemes is a significant drawback for latency-sensitive DNS. How can this be viable at scale?"
+
+This concern is valid and worth quantifying:
+
+| Scheme | Sign (ms) | Verify (ms) | Signature Size | NIST Level |
+|--------|----------|-------------|----------------|------------|
+| RSA-2048 | 0.01–0.05 | 0.01–0.03 | 256 B | 0 (vulnerable) |
+| ML-DSA-65 | 1–3 | 0.2–0.5 | 3,293 B | 3 |
+| Falcon-512 | 0.3–1.0 | 0.1–0.3 | 666 B | 1 |
+| SLH-DSA-128 | 30–80 | 1–3 | 7,856 B | 1 |
+
+A typical DNS lookup takes **5–15 ms** (upstream resolver dependent). ML-DSA-65 signing adds ~1–3 ms — a 10–30% overhead in the signing step, but DNS lookup still dominates the total. Falcon-512 at 0.3–1 ms is nearly indistinguishable from RSA in the total query budget.
+
+**SLH-DSA-128 is the outlier**: its 30–80 ms signing time makes it impractical for high-throughput online DNS signing, but it is appropriate for *offline zone signing* (pre-signing DNS records in advance) where speed is not a constraint. Its conservative hash-based design (no lattice assumptions) makes it attractive for maximum-assurance use cases.
+
+More broadly: NIST standardized these algorithms knowing they would replace RSA/ECC across all of TLS, PKI, and DNSSEC. Browser makers, CDNs, and cloud providers are already deploying ML-KEM (the key exchange counterpart) in production TLS. Cloudflare and Google have run PQ TLS experiments at scale with acceptable overhead. The latency argument applies equally to TLS handshakes and certificate issuance — and industry has concluded the tradeoff is acceptable given the 10-year threat window.
+
+---
+
+### "Classical PRNGs like os.urandom are cryptographically secure. Does QRNG actually add meaningful security, or is the entropy the same?"
+
+The distinction is in the **trust model**, not the output statistics.
+
+`os.urandom` draws from the kernel's CSPRNG (Linux `/dev/urandom`, macOS `SecRandomCopyBytes`), seeded from hardware interrupts, disk I/O timing, and CPU jitter. This is *computationally secure*: an adversary who cannot observe the seed cannot predict the output.
+
+The key caveat: the seed is **deterministic given sufficient system observation**. An adversary who compromises the kernel, hypervisor, or hardware RNG (via side-channel, supply-chain attack, or privileged access) can predict all future PRNG output. This is not a hypothetical — RNG compromise has been a documented attack vector in NSA surveillance programs, hypervisor exploits, and embedded device key generation.
+
+**QRNG provides information-theoretic randomness**: quantum measurement outcomes are fundamentally unpredictable by the laws of physics (Born's rule). No algorithm, no observation of the qubit before measurement, and no amount of computation can predict the result. The randomness is not computationally hard — it is **physically impossible** to predict.
+
+**Practical implications for DNS**:
+- QRNG seeds are used for nonce generation in PQ signature schemes. A predictable nonce in a lattice-based scheme can enable signature forgery attacks.
+- In adversarial environments (government, finance, critical infrastructure), PRNG compromise is a realistic threat. QRNG eliminates this attack surface.
+- The cost: ~0.3 ms for a Redis LPOP of a pre-generated seed — effectively free.
+- The pool is replenished automatically every 5 minutes by the Lambda QRNG generator.
+
+When the pool is empty (PRNG fallback), the system remains functionally correct but loses the information-theoretic guarantee. The dashboard displays pool size and QRNG hit rate so this is always visible.
+
+For the purposes of this demo: QRNG also illustrates a key architectural point — **quantum technology appears on both sides of the security equation**, as both a threat (Shor's algorithm) and a defense tool (quantum randomness). This duality is central to why post-quantum cryptography requires holistic thinking, not just algorithm swaps.
+
+---
 
 ## Team
 
