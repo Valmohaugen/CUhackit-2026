@@ -1,4 +1,4 @@
-"""AI chatbot module powered by Claude (Anthropic API).
+"""AI chatbot module powered by OpenAI GPT-4o-mini.
 
 Provides:
   - chat: Send a message with context and get an AI response about

@@ -27,10 +27,12 @@ class ChatResponse(BaseModel):
 @router.post("/api/chatbot", response_model=ChatResponse)
 async def chatbot_endpoint(body: ChatRequest, request: Request) -> ChatResponse:
     """Send a message to the AI assistant."""
-    # Optional context (current dashboard state) and history (prior turns) are injected into the prompt.
-    response = await chat(
-        user_message=body.message,
-        context=body.context,
-        history=body.history,
-    )
+    try:
+        response = await chat(
+            user_message=body.message,
+            context=body.context,
+            history=body.history,
+        )
+    except Exception as e:
+        response = f"Chatbot error: {e}"
     return ChatResponse(response=response)
