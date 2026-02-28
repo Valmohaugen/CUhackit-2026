@@ -12,6 +12,23 @@ import streamlit as st
 
 from src.dashboard.utils import get_benchmarks, get_entropy, resolve_with_options
 
+# Map liboqs internal names back to user-friendly display names
+_SCHEME_DISPLAY: dict[str, str] = {
+    "SPHINCS+-SHA2-128s-simple": "SLH-DSA-128",
+    "SPHINCS+-SHAKE-128s-simple": "SLH-DSA-128",
+    "SPHINCS+-SHA256-128s-simple": "SLH-DSA-128",
+    "SLH-DSA-SHA2-128s": "SLH-DSA-128",
+    "SLH-DSA-SHAKE-128s": "SLH-DSA-128",
+    "Dilithium3": "ML-DSA-65",
+    "ML-DSA-44": "ML-DSA-65 (alt)",
+    "Falcon-padded-512": "Falcon-512",
+}
+
+
+def _normalize_scheme(name: str) -> str:
+    """Return a user-friendly scheme name for display."""
+    return _SCHEME_DISPLAY.get(name, name)
+
 
 def render_benchmark_panel() -> None:
     """Render the benchmarks panel."""
@@ -33,6 +50,13 @@ def render_benchmark_panel() -> None:
 
 def _render_timing() -> None:
     """Render scheme timing benchmarks with state persistence."""
+    st.markdown(
+        "Rigorous per-iteration benchmarks across all four signature schemes. "
+        "Unlike the DNS Resolver tab (which measures full query latency including network), "
+        "these benchmarks isolate the **cryptographic operations only** — keygen, sign, and verify — "
+        "giving you clean numbers to compare PQ overhead independent of DNS lookup time."
+    )
+
     if st.button("Run Benchmarks", type="primary"):
         with st.spinner("Benchmarking all schemes..."):
             data = get_benchmarks()
@@ -48,27 +72,52 @@ def _render_timing() -> None:
 
     for entry in data:
         if "error" in entry:
-            st.warning(f"{entry['scheme']}: {entry['error']}")
+            st.warning(f"{_normalize_scheme(entry.get('scheme', '?'))}: {entry['error']}")
             continue
 
-        scheme = entry.get("scheme", "unknown")
+        raw_scheme = entry.get("scheme", "unknown")
+        scheme = _normalize_scheme(raw_scheme)
         st.subheader(scheme)
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Keygen", f"{entry.get('keygen_ms', 0):.2f} ms")
+            st.metric(
+                "Keygen",
+                f"{entry.get('keygen_ms', 0):.2f} ms",
+                help="Time to generate a fresh keypair. Averaged over 10 iterations. In practice, keys are generated once and cached.",
+            )
         with col2:
-            st.metric("Sign", f"{entry.get('sign_ms', 0):.2f} ms")
+            st.metric(
+                "Sign",
+                f"{entry.get('sign_ms', 0):.2f} ms",
+                help="Time to sign a DNS response payload (~50 bytes). This is the per-query overhead added by PQ crypto.",
+            )
         with col3:
-            st.metric("Verify", f"{entry.get('verify_ms', 0):.2f} ms")
+            st.metric(
+                "Verify",
+                f"{entry.get('verify_ms', 0):.2f} ms",
+                help="Time to verify the signature. Uses a cached verifier instance to avoid re-keying overhead.",
+            )
 
         col4, col5, col6 = st.columns(3)
         with col4:
-            st.metric("Public Key", f"{entry.get('public_key_bytes', 0):,} bytes")
+            st.metric(
+                "Public Key",
+                f"{entry.get('public_key_bytes', 0):,} B",
+                help="Public key size in bytes. Larger keys add overhead to DNSSEC zone transfers and certificate chains.",
+            )
         with col5:
-            st.metric("Secret Key", f"{entry.get('secret_key_bytes', 0):,} bytes")
+            st.metric(
+                "Secret Key",
+                f"{entry.get('secret_key_bytes', 0):,} B",
+                help="Secret key size in bytes. Stored securely on the signing resolver; not transmitted.",
+            )
         with col6:
-            st.metric("Signature", f"{entry.get('signature_bytes', 0):,} bytes")
+            st.metric(
+                "Signature",
+                f"{entry.get('signature_bytes', 0):,} B",
+                help="Signature size appended to each DNS response. Larger signatures increase DNS packet size and may require EDNS0 buffer extension.",
+            )
 
         st.markdown("---")
 
@@ -77,7 +126,7 @@ def _render_timing() -> None:
     for entry in data:
         if "error" not in entry:
             chart_data.append({
-                "Scheme": entry["scheme"],
+                "Scheme": _normalize_scheme(entry.get("scheme", "unknown")),
                 "Keygen (ms)": entry.get("keygen_ms", 0),
                 "Sign (ms)": entry.get("sign_ms", 0),
                 "Verify (ms)": entry.get("verify_ms", 0),
@@ -88,15 +137,16 @@ def _render_timing() -> None:
 
         # Numeric summary table
         summary = df.copy()
-        summary["Total (ms)"] = summary.sum(axis=1)
+        summary["Sign + Verify (ms)"] = summary["Sign (ms)"] + summary["Verify (ms)"]
         st.dataframe(summary.style.format("{:.2f}"), use_container_width=True)
 
         # Recommend fastest scheme
         fastest = min(chart_data, key=lambda x: x["Sign (ms)"] + x["Verify (ms)"])
         total_sv = fastest["Sign (ms)"] + fastest["Verify (ms)"]
         st.info(
-            f"**Fastest scheme:** {fastest['Scheme']} — "
-            f"combined sign+verify: {total_sv:.2f} ms"
+            f"**Fastest for DNS:** {fastest['Scheme']} — "
+            f"combined sign+verify: {total_sv:.2f} ms. "
+            f"For context, a typical DNS lookup is 5–15 ms, so PQ signing adds minimal overhead."
         )
 
 
@@ -154,7 +204,8 @@ def _render_distribution() -> None:
             st.warning(f"No results for {scheme}")
             continue
 
-        st.markdown(f"#### {results[0].get('scheme', scheme)}")
+        display_scheme = _normalize_scheme(results[0].get("scheme", scheme))
+        st.markdown(f"#### {display_scheme}")
         latencies = [r.get("latency_ms", 0) for r in results]
         dns_times = [r.get("dns_lookup_ms", 0) for r in results]
         sign_times = [r.get("sign_ms", 0) for r in results]
@@ -163,13 +214,29 @@ def _render_distribution() -> None:
         arr = np.array(latencies)
         col_p50, col_p95, col_p99, col_mean = st.columns(4)
         with col_p50:
-            st.metric("P50", f"{np.percentile(arr, 50):.1f} ms", help="Median latency")
+            st.metric(
+                "50th Percentile",
+                f"{np.percentile(arr, 50):.1f} ms",
+                help="Median latency — half of all requests complete faster than this value.",
+            )
         with col_p95:
-            st.metric("P95", f"{np.percentile(arr, 95):.1f} ms", help="95th percentile")
+            st.metric(
+                "95th Percentile",
+                f"{np.percentile(arr, 95):.1f} ms",
+                help="95% of requests complete within this time. A common SLA target for production services.",
+            )
         with col_p99:
-            st.metric("P99", f"{np.percentile(arr, 99):.1f} ms", help="99th percentile")
+            st.metric(
+                "99th Percentile",
+                f"{np.percentile(arr, 99):.1f} ms",
+                help="Worst-case latency — only 1 in 100 requests exceeds this. Captures tail latency spikes.",
+            )
         with col_mean:
-            st.metric("Mean", f"{np.mean(arr):.1f} ms", help="Average latency")
+            st.metric(
+                "Mean",
+                f"{np.mean(arr):.1f} ms",
+                help="Average latency across all iterations. Can be skewed by outliers — use 50th percentile for a more representative view.",
+            )
 
         # Per-component means
         col_d, col_s, col_v = st.columns(3)
@@ -236,65 +303,95 @@ def _render_entropy() -> None:
 
     # --- Comparison bar charts with numeric values ---
     st.markdown("---")
-    st.markdown("### Comparison Plots")
+    st.subheader("Comparison Plots")
+    st.caption(
+        "Each chart shows PRNG (classical os.urandom) vs QRNG (quantum circuit seeds). "
+        "Both should be very close — the value is in the trust model and theoretical guarantees, not detectable statistical differences."
+    )
 
-    # 1. Shannon Entropy
-    st.markdown("#### Shannon Entropy")
     qrng_h = data.get("qrng_shannon_entropy", 0)
     prng_h = data.get("prng_shannon_entropy", 0)
+    qrng_chi2 = data.get("qrng_chi_squared", 0)
+    prng_chi2 = data.get("prng_chi_squared", 0)
+    qrng_chi2_p = data.get("qrng_chi_squared_p", 0)
+    prng_chi2_p = data.get("prng_chi_squared_p", 0)
+    qrng_corr = abs(data.get("qrng_serial_correlation", 0))
+    prng_corr = abs(data.get("prng_serial_correlation", 0))
+    qrng_runs_p = data.get("qrng_runs_test_p", 0)
+    prng_runs_p = data.get("prng_runs_test_p", 0)
+
+    # 1. Shannon Entropy
+    st.markdown("#### 1. Shannon Entropy — Information Content per Bit")
+    st.caption(
+        "Measures the average information content per bit. Ideal random source = **1.0 bit**. "
+        "Values near 1.0 indicate the source is producing maximally unpredictable bits with no bias."
+    )
     entropy_df = pd.DataFrame({
         "Source": ["PRNG", "QRNG"],
-        "Shannon Entropy": [prng_h, qrng_h],
+        "Shannon Entropy (bits)": [prng_h, qrng_h],
     }).set_index("Source")
     st.bar_chart(entropy_df)
     st.caption(
-        f"Ideal: 1.0 bit | PRNG: {prng_h:.4f} | QRNG: {qrng_h:.4f} | "
-        f"Delta (QRNG-PRNG): {qrng_h - prng_h:+.4f}"
+        f"Ideal: 1.0 bit | PRNG: **{prng_h:.4f}** | QRNG: **{qrng_h:.4f}** | "
+        f"Delta: {qrng_h - prng_h:+.6f}"
     )
 
+    st.markdown("---")
+
     # 2. Chi-Squared
-    st.markdown("#### Chi-Squared Statistic")
-    qrng_chi2 = data.get("qrng_chi_squared", 0)
-    prng_chi2 = data.get("prng_chi_squared", 0)
+    st.markdown("#### 2. Chi-Squared Statistic — Byte Uniformity Test")
+    st.caption(
+        "Tests whether all 256 byte values appear with equal frequency. "
+        "Lower chi-squared = more uniform distribution. Critical value ≈ 293 at p=0.05 (df=255). "
+        "Values below this threshold indicate the byte distribution is consistent with true randomness."
+    )
     chi2_df = pd.DataFrame({
         "Source": ["PRNG", "QRNG"],
         "Chi-Squared": [prng_chi2, qrng_chi2],
     }).set_index("Source")
     st.bar_chart(chi2_df)
     st.caption(
-        f"Lower is better (critical ~293 at p=0.05) | "
-        f"PRNG: {prng_chi2:.2f} | QRNG: {qrng_chi2:.2f}"
+        f"Lower is better | Critical value ≈ 293 | "
+        f"PRNG: **{prng_chi2:.2f}** | QRNG: **{qrng_chi2:.2f}**"
     )
 
+    st.markdown("---")
+
     # 3. Serial Correlation
-    st.markdown("#### Serial Correlation (Lag-1)")
-    qrng_corr = abs(data.get("qrng_serial_correlation", 0))
-    prng_corr = abs(data.get("prng_serial_correlation", 0))
+    st.markdown("#### 3. Serial Correlation (Lag-1) — Predictability of Consecutive Bits")
+    st.caption(
+        "Measures whether knowing one bit helps predict the next (lag-1 autocorrelation). "
+        "Ideal = **0.0** (no correlation). Values near zero mean each bit is independent — "
+        "a key requirement for cryptographically secure randomness."
+    )
     corr_df = pd.DataFrame({
         "Source": ["PRNG", "QRNG"],
-        "Serial Correlation": [prng_corr, qrng_corr],
+        "Serial Correlation |lag-1|": [prng_corr, qrng_corr],
     }).set_index("Source")
     st.bar_chart(corr_df)
     st.caption(
-        f"Closer to 0 is better | PRNG: {prng_corr:.6f} | QRNG: {qrng_corr:.6f}"
+        f"Closer to 0 is better | PRNG: **{prng_corr:.6f}** | QRNG: **{qrng_corr:.6f}**"
     )
 
+    st.markdown("---")
+
     # 4. Combined p-values
-    st.markdown("#### Statistical Test p-values (Higher = More Random)")
-    qrng_chi2_p = data.get("qrng_chi_squared_p", 0)
-    prng_chi2_p = data.get("prng_chi_squared_p", 0)
-    qrng_runs_p = data.get("qrng_runs_test_p", 0)
-    prng_runs_p = data.get("prng_runs_test_p", 0)
+    st.markdown("#### 4. Statistical Test p-values — Randomness Hypothesis")
+    st.caption(
+        "p-value from chi-squared and Wald-Wolfowitz runs tests. **Higher p-value = more consistent with true randomness.** "
+        "Pass threshold: p > 0.01. Failure does not mean the source is broken — it may reflect "
+        "insufficient sample size or natural variance. Both QRNG and PRNG should pass at this threshold."
+    )
     pval_df = pd.DataFrame({
-        "Test": ["Chi-Squared", "Runs Test"],
+        "Test": ["Chi-Squared p", "Runs Test p"],
         "PRNG": [prng_chi2_p, prng_runs_p],
         "QRNG": [qrng_chi2_p, qrng_runs_p],
     }).set_index("Test")
     st.bar_chart(pval_df)
     st.caption(
         f"Pass threshold: p > 0.01 | "
-        f"Chi-Sq: PRNG={prng_chi2_p:.4f} ({'PASS' if prng_chi2_p >= 0.01 else 'FAIL'}), "
-        f"QRNG={qrng_chi2_p:.4f} ({'PASS' if qrng_chi2_p >= 0.01 else 'FAIL'}) | "
-        f"Runs: PRNG={prng_runs_p:.4f} ({'PASS' if prng_runs_p >= 0.01 else 'FAIL'}), "
-        f"QRNG={qrng_runs_p:.4f} ({'PASS' if qrng_runs_p >= 0.01 else 'FAIL'})"
+        f"Chi-Sq: PRNG={prng_chi2_p:.4f} ({'✓ PASS' if prng_chi2_p >= 0.01 else '✗ FAIL'}), "
+        f"QRNG={qrng_chi2_p:.4f} ({'✓ PASS' if qrng_chi2_p >= 0.01 else '✗ FAIL'}) | "
+        f"Runs: PRNG={prng_runs_p:.4f} ({'✓ PASS' if prng_runs_p >= 0.01 else '✗ FAIL'}), "
+        f"QRNG={qrng_runs_p:.4f} ({'✓ PASS' if qrng_runs_p >= 0.01 else '✗ FAIL'})"
     )

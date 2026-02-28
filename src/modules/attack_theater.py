@@ -19,6 +19,7 @@ References:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
@@ -318,34 +319,24 @@ def _compute_factors(n: int, a: int, r: int) -> list[int] | None:
 # =============================================================================
 
 
-async def run_shors(n: int, redis_client: Any) -> dict:
-    """Run Shor's algorithm to factor n on a quantum simulator.
+def _run_shors_sync(n: int) -> dict:
+    """Synchronous CPU-heavy Shor's computation. Safe to run in a thread pool.
 
-    Builds a quantum phase estimation circuit for order-finding, executes
-    it on the Qiskit AerSimulator, and performs classical post-processing
-    with continued fractions to recover factors of n.
-
-    For the demo the canonical target is N=15, which factors into 3 and 5.
+    Separated from run_shors so it can be offloaded via asyncio.to_thread()
+    without blocking the async event loop during Qiskit circuit simulation.
 
     Args:
-        n: The integer to factor (currently supports 15).
-        redis_client: An async Redis client instance (redis.asyncio.Redis).
+        n: The integer to factor.
 
     Returns:
-        A dict containing factored (bool), factors (list), n (int),
-        qubits_used (int), shots (int), time_seconds (float), and
-        circuit_depth (int).
+        A dict with factoring results, circuit info, and timing.
     """
     logger.info("[SHORS] Starting Shor's algorithm for N=%d", n)
-    await redis_client.set(RedisKeys.ATTACK_SHORS_STATUS, "running")
-
     t_start = time.perf_counter()
 
-    # Find coprime bases to try (these have gcd(a, n)==1, suitable for QPE)
     bases = _find_coprime_bases(n)
     if not bases:
-        # No coprime bases found — n might be a prime power or trivial
-        result = {
+        return {
             "factored": False,
             "factors": [],
             "n": n,
@@ -358,13 +349,9 @@ async def run_shors(n: int, redis_client: Any) -> dict:
             "circuit_text": "",
             "measurement_counts": {},
             "total_unique_outcomes": 0,
+            "n_work_qubits": 0,
         }
-        await _store_result(redis_client, result, status="failed")
-        return result
 
-    # -------------------------------------------------------------------------
-    # Try multiple coprime bases with the quantum circuit
-    # -------------------------------------------------------------------------
     n_count = _COUNTING_QUBITS
     n_work = _n_work_qubits(n)
     shots = _get_shors_shots(n)
@@ -401,7 +388,6 @@ async def run_shors(n: int, redis_client: Any) -> dict:
             job_result = backend.run(transpiled, shots=shots).result()
             counts = job_result.get_counts()
 
-            # Capture circuit visualization from the best (first successful) run
             if not best_circuit_text:
                 try:
                     best_circuit_text = circuit.draw("text").__str__()
@@ -413,7 +399,6 @@ async def run_shors(n: int, redis_client: Any) -> dict:
                 best_qubits = qubits_used
                 best_depth = circuit_depth
 
-            # Classical post-processing: extract order via continued fractions
             order = _extract_order(counts, n_count, n, a)
             if order is not None:
                 logger.info("[SHORS] Found order r=%d for a=%d mod %d", order, a, n)
@@ -427,10 +412,6 @@ async def run_shors(n: int, redis_client: Any) -> dict:
     t_elapsed = round(time.perf_counter() - t_start, 4)
     factored = factors is not None and len(factors) >= 2
 
-    # -------------------------------------------------------------------------
-    # Known-factors fallback — if quantum circuit didn't converge, use
-    # precomputed factors for supported semiprimes so the demo succeeds
-    # -------------------------------------------------------------------------
     method = "quantum"
     if not factored and n in _KNOWN_FACTORS:
         logger.warning(
@@ -456,10 +437,6 @@ async def run_shors(n: int, redis_client: Any) -> dict:
         "n_work_qubits": n_work,
     }
 
-    # Use "done" status — this is what the API route and dashboard expect
-    status = "done" if factored else "failed"
-    await _store_result(redis_client, result, status=status)
-
     if factored:
         logger.info(
             "[SHORS] Successfully factored %d = %s in %.4fs (method=%s, bases=%s)",
@@ -468,6 +445,51 @@ async def run_shors(n: int, redis_client: Any) -> dict:
     else:
         logger.warning("[SHORS] Failed to factor %d after %.4fs (bases=%s)", n, t_elapsed, bases_tried)
 
+    return result
+
+
+async def run_shors(n: int, redis_client: Any) -> dict:
+    """Run Shor's algorithm to factor n on a quantum simulator.
+
+    Offloads the CPU-heavy Qiskit circuit simulation to a thread pool via
+    asyncio.to_thread() so the async event loop stays unblocked and can
+    continue serving API requests and Redis operations while the simulation runs.
+
+    Args:
+        n: The integer to factor.
+        redis_client: An async Redis client instance (redis.asyncio.Redis).
+
+    Returns:
+        A dict containing factored (bool), factors (list), n (int),
+        qubits_used (int), shots (int), time_seconds (float), and
+        circuit_depth (int).
+    """
+    logger.info("[SHORS] Launching Shor's algorithm for N=%d (thread pool)", n)
+    await redis_client.set(RedisKeys.ATTACK_SHORS_STATUS, "running")
+
+    try:
+        result = await asyncio.to_thread(_run_shors_sync, n)
+    except Exception as e:
+        logger.error("[SHORS] Thread-pool execution failed: %s", e)
+        result = {
+            "factored": False,
+            "factors": [],
+            "n": n,
+            "qubits_used": 0,
+            "shots": 0,
+            "time_seconds": 0.0,
+            "circuit_depth": 0,
+            "method": "error",
+            "bases_tried": [],
+            "circuit_text": "",
+            "measurement_counts": {},
+            "total_unique_outcomes": 0,
+            "n_work_qubits": 0,
+            "error": str(e),
+        }
+
+    status = "done" if result.get("factored") else "failed"
+    await _store_result(redis_client, result, status=status)
     return result
 
 
@@ -834,50 +856,89 @@ def security_margin_analysis(sign_ms: float, verify_ms: float, scheme: str) -> d
     # - Grover's algorithm: O(√N) brute-force → halves symmetric key length
     # - Lattice problems (LWE/SVP): best quantum = O(2^(n/2)) → no polynomial speedup
 
+    # Maps all known scheme name variants (including liboqs internal names) to info.
+    # liboqs may return names like "SPHINCS+-SHA2-128s-simple" for what we call SLH-DSA-128.
+    _slh_dsa_entry: dict[str, Any] = {
+        "nist_level": 1,
+        "classical_bits": 128,
+        "quantum_attack_years": 1e8,
+        "basis": "Hash-based (SPHINCS+)",
+        "display_name": "SLH-DSA-128",
+    }
+
     scheme_info: dict[str, dict[str, Any]] = {
         "ML-DSA-65": {
             "nist_level": 3,
             "classical_bits": 192,
             "quantum_attack_years": 1e12,
-            "basis": "Module-LWE lattice problem",
+            "basis": "Module-LWE lattice",
+            "display_name": "ML-DSA-65",
         },
         "Dilithium3": {
             "nist_level": 3,
             "classical_bits": 192,
             "quantum_attack_years": 1e12,
-            "basis": "Module-LWE lattice problem",
+            "basis": "Module-LWE lattice",
+            "display_name": "ML-DSA-65",
+        },
+        "ML-DSA-44": {
+            "nist_level": 2,
+            "classical_bits": 128,
+            "quantum_attack_years": 1e8,
+            "basis": "Module-LWE lattice",
+            "display_name": "ML-DSA-44",
         },
         "Falcon-512": {
             "nist_level": 1,
             "classical_bits": 128,
             "quantum_attack_years": 1e8,
-            "basis": "NTRU lattice problem",
+            "basis": "NTRU lattice",
+            "display_name": "Falcon-512",
         },
-        "SLH-DSA-SHA2-128s": {
+        "Falcon-padded-512": {
             "nist_level": 1,
             "classical_bits": 128,
             "quantum_attack_years": 1e8,
-            "basis": "Hash-based (no lattice assumption)",
+            "basis": "NTRU lattice",
+            "display_name": "Falcon-512",
         },
+        # SLH-DSA-128 / SPHINCS+ — all liboqs name variants
+        "SLH-DSA-128": _slh_dsa_entry,
+        "SLH-DSA-SHA2-128s": _slh_dsa_entry,
+        "SLH-DSA-SHAKE-128s": _slh_dsa_entry,
+        "SPHINCS+-SHA2-128s-simple": _slh_dsa_entry,
+        "SPHINCS+-SHAKE-128s-simple": _slh_dsa_entry,
+        "SPHINCS+-SHA256-128s-simple": _slh_dsa_entry,
+        "slh-dsa-128": _slh_dsa_entry,
         "RSA-2048": {
             "nist_level": 0,
             "classical_bits": 112,
             "quantum_attack_years": 0.001,  # Shor's: near-instant with CRQC
-            "basis": "Integer factorization (Shor-vulnerable)",
+            "basis": "Integer factoring (Shor-vulnerable)",
+            "display_name": "RSA-2048",
         },
         "HMAC-SHA256": {
             "nist_level": 0,
             "classical_bits": 128,
             "quantum_attack_years": 1e4,  # Grover's: quadratic speedup
             "basis": "Symmetric (Grover speedup only)",
+            "display_name": "HMAC-SHA256",
         },
     }
 
-    # Find matching info (try exact match, then prefix match)
-    info = scheme_info.get(scheme)
+    # Find matching info (exact match first, then case-insensitive, then prefix)
+    info = scheme_info.get(scheme) or scheme_info.get(scheme.lower())
     if not info:
+        scheme_lower = scheme.lower()
         for key, val in scheme_info.items():
-            if key.lower().startswith(scheme.lower().split("-")[0]):
+            if key.lower() == scheme_lower:
+                info = val
+                break
+    if not info:
+        # Prefix match: e.g. "sphincs+" prefix catches any SPHINCS+ variant
+        prefix = scheme.lower().split("-")[0].split("+")[0]
+        for key, val in scheme_info.items():
+            if key.lower().startswith(prefix) and len(prefix) > 2:
                 info = val
                 break
     if not info:
@@ -886,6 +947,7 @@ def security_margin_analysis(sign_ms: float, verify_ms: float, scheme: str) -> d
             "classical_bits": 0,
             "quantum_attack_years": 0,
             "basis": "Unknown scheme",
+            "display_name": scheme,
         }
 
     attack_years = info["quantum_attack_years"]
@@ -902,6 +964,7 @@ def security_margin_analysis(sign_ms: float, verify_ms: float, scheme: str) -> d
 
     return {
         "scheme": scheme,
+        "display_name": info.get("display_name", scheme),
         "nist_level": info["nist_level"],
         "classical_security_bits": info["classical_bits"],
         "quantum_attack_estimate_years": attack_years,

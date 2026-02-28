@@ -10,7 +10,60 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.dashboard.utils import get_shors_status, start_shors, _get
+from src.dashboard.utils import get_shors_status, start_shors, _get, get_config, set_config
+
+
+# Preset configs for deployment simulation
+_PRESETS = {
+    "Enterprise (balanced)": {
+        "scheme": "ml-dsa-65",
+        "source": "qrng",
+        "extractor": "toeplitz",
+        "phase": "hybrid",
+        "scenario": "enterprise",
+        "description": "Best balance of security and performance. ML-DSA-65 NIST Level 3, QRNG seeds, hybrid migration phase.",
+    },
+    "IoT / Constrained device": {
+        "scheme": "falcon-512",
+        "source": "prng",
+        "extractor": "von_neumann",
+        "phase": "pq_only",
+        "scenario": "iot",
+        "description": "Smallest signatures (666 B), lowest overhead. Ideal for bandwidth-constrained devices.",
+    },
+    "Web Application": {
+        "scheme": "ml-dsa-65",
+        "source": "qrng",
+        "extractor": "toeplitz",
+        "phase": "hybrid",
+        "scenario": "web",
+        "description": "Standard web deployment. ML-DSA-65 with hybrid phase supports gradual migration.",
+    },
+    "Maximum security (conservative)": {
+        "scheme": "slh-dsa-128",
+        "source": "qrng",
+        "extractor": "fft",
+        "phase": "pq_only",
+        "scenario": "critical",
+        "description": "SPHINCS+ hash-based — no lattice assumptions. Slowest but most conservative. For high-value, low-volume signing.",
+    },
+    "Financial / Critical infrastructure": {
+        "scheme": "ml-dsa-65",
+        "source": "qrng",
+        "extractor": "fft",
+        "phase": "pq_only",
+        "scenario": "financial",
+        "description": "Full PQ-only deployment with QRNG and FFT-Toeplitz extraction. Highest assurance.",
+    },
+    "Classical baseline (pre-migration)": {
+        "scheme": "rsa-2048",
+        "source": "prng",
+        "extractor": "von_neumann",
+        "phase": "classical",
+        "scenario": "web",
+        "description": "Current state before PQ migration. RSA-2048 is quantum-vulnerable via Shor's algorithm.",
+    },
+}
 
 
 def render_attack_panel() -> None:
@@ -289,6 +342,30 @@ def _render_hndl_analysis() -> None:
         "data shelf life vs. time until quantum computers can break each algorithm."
     )
 
+    # Deployment simulation presets — replaces the global migration phase/scenario controls
+    with st.expander("Deployment Simulation Presets", expanded=False):
+        st.markdown(
+            "Select a deployment scenario to automatically configure the controls above "
+            "and simulate how a real-world system would be set up. Each preset sets the "
+            "signature scheme, random source, entropy extractor, and migration phase."
+        )
+        preset_name = st.selectbox(
+            "Scenario",
+            list(_PRESETS.keys()),
+            key="hndl_preset_select",
+            help="Each preset represents a different deployment context with recommended PQ settings.",
+        )
+        preset = _PRESETS[preset_name]
+        st.caption(preset["description"])
+
+        if st.button("Apply Preset", type="primary", key="apply_preset_btn"):
+            config_update = {k: v for k, v in preset.items() if k != "description"}
+            set_config(config_update)
+            st.success(f"Applied: {preset_name}")
+            st.rerun()
+
+    st.markdown("---")
+
     import pandas as pd
 
     # Static threat timeline data
@@ -403,51 +480,57 @@ def _render_security_margins() -> None:
             data = _get("/api/attack/security-margin")
 
         if data:
-            import pandas as pd
-
             for entry in data:
                 if "error" in entry:
                     st.warning(f"{entry.get('scheme', '?')}: {entry['error']}")
                     continue
 
-                scheme = entry.get("scheme", "?")
+                # Use normalized display name (e.g. SLH-DSA-128 instead of SPHINCS+-SHA2-128s-simple)
+                display = entry.get("display_name") or entry.get("scheme", "?")
                 verdict = entry.get("verdict", "?")
 
                 if verdict == "QUANTUM-RESISTANT":
-                    st.success(f"**{scheme}** — {verdict}")
+                    st.success(f"**{display}** — {verdict}")
                 elif verdict == "QUANTUM-VULNERABLE":
-                    st.error(f"**{scheme}** — {verdict}")
+                    st.error(f"**{display}** — {verdict}")
                 else:
-                    st.warning(f"**{scheme}** — {verdict}")
+                    st.warning(f"**{display}** — {verdict}")
 
                 col1, col2, col3, col4 = st.columns(4)
                 with col1:
-                    st.metric(
-                        "NIST Level",
-                        entry.get("nist_level", "?"),
-                        help="NIST post-quantum security level (1-5)",
-                    )
+                    nist = entry.get("nist_level", "?")
+                    nist_help = {
+                        0: "Not post-quantum secure — vulnerable to Shor's algorithm",
+                        1: "Equivalent to AES-128 security (128-bit quantum security)",
+                        2: "Equivalent to SHA-256 collision resistance",
+                        3: "Equivalent to AES-192 security (192-bit quantum security)",
+                        5: "Equivalent to AES-256 security — highest NIST level",
+                    }.get(nist, "NIST post-quantum security level (1–5)")
+                    st.metric("NIST Level", nist, help=nist_help)
                 with col2:
                     st.metric(
                         "Sign Time",
                         f"{entry.get('sign_ms', 0):.2f} ms",
-                        help="Measured signing time",
+                        help="Average time to sign a DNS response payload. Measured locally over 5 iterations.",
                     )
                 with col3:
                     atk = entry.get("quantum_attack_estimate_years", 0)
                     if atk >= 1e10:
-                        label = f"{atk:.0e} years"
+                        label = f"{atk:.0e} yrs"
                     elif atk >= 1:
-                        label = f"{atk:.0f} years"
+                        label = f"{atk:.0f} yrs"
                     else:
-                        label = f"{atk:.4f} years"
+                        label = f"{atk:.4f} yrs"
                     st.metric(
-                        "Quantum Attack",
+                        "Est. Quantum Attack",
                         label,
-                        help="Estimated time for a quantum computer to break this scheme",
+                        help="Estimated time for a cryptographically relevant quantum computer (CRQC) to forge a signature for this scheme. Lattice and hash schemes have no known polynomial quantum speedup.",
                     )
                 with col4:
-                    st.metric("Basis", entry.get("basis", "?"))
+                    basis = entry.get("basis", "?")
+                    # Show short label in metric; full text in help tooltip
+                    short_basis = basis.split("(")[0].strip() if "(" in basis else basis
+                    st.metric("Basis", short_basis, help=basis)
 
                 st.markdown("---")
         else:

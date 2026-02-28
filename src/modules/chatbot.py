@@ -138,6 +138,7 @@ for transitioning different deployment scenarios through three phases: Assessmen
 and Full PQ.
 
 ## FAQ
+
 Q: Is this actually quantum-secure?
 A: Yes — ML-DSA-65, Falcon-512, and SLH-DSA-128 are all NIST-standardized PQ algorithms \
 resistant to both classical and quantum attacks. RSA-2048 is only a comparison baseline.
@@ -161,6 +162,55 @@ physical qubits. Threat estimated at 2030-2040, but HNDL risk exists today.
 Q: What is crypto-agility?
 A: The ability to quickly swap algorithms without system redesign. Use the sidebar toggle \
 to switch schemes in real time.
+
+Q: DNS resolution with RSA is done in milliseconds — an attacker couldn't run Shor's algorithm \
+fast enough to intercept a single DNS response. Why do we need post-quantum DNS?
+A: This is the "Harvest-Now, Decrypt-Later" (HNDL) problem. An attacker does NOT need to \
+break DNS in real time. Instead, they record encrypted DNS traffic today — TLS-protected \
+queries, DNSSEC-signed zone transfers, signed resolver responses — and decrypt them once a \
+cryptographically relevant quantum computer (CRQC) becomes available, estimated 2030-2040. \
+DNS records can expose browsing behavior, internal infrastructure topology, and certificate \
+metadata. Additionally, DNSSEC itself uses RSA/ECDSA for zone signing — those signatures on \
+long-lived DNS zones are exactly the kind of persistent, high-value data adversaries stockpile. \
+DNS is also a stepping stone: hijacking it enables MITM attacks on all downstream TLS sessions. \
+The threat is not to the millisecond handshake — it is to the persistent cryptographic \
+artifacts that DNS signing creates.
+
+Q: The increase in signing/verification time with post-quantum schemes is a huge drawback \
+for something as latency-sensitive as DNS. How can this solution be viable at scale?
+A: This concern is valid and worth quantifying precisely. ML-DSA-65 signing takes ~1-3ms \
+and verification ~0.2-0.5ms on commodity hardware. A typical DNS lookup takes 5-15ms. \
+So PQ signing adds roughly 10-30% latency overhead for the signing step — but DNS lookup \
+dominates the total. For comparison, DNSSEC with RSA-2048 adds ~0.01-0.05ms for signing, \
+so the overhead is real but not prohibitive. SLH-DSA-128 (SPHINCS+) is the outlier at \
+30-80ms for signing — its conservative hash-based design makes it impractical for \
+high-throughput DNS resolvers but acceptable for offline zone signing. Falcon-512 at \
+0.3-1ms is the fastest PQ option and the most practical for real-time DNS signing. \
+More broadly: NIST standardized these algorithms knowing they would replace RSA/ECC across \
+all of TLS, PKI, and DNSSEC. Browser makers, CDNs, and cloud providers are already deploying \
+ML-KEM (the key exchange counterpart) in production. The latency argument applies equally to \
+TLS handshakes, certificate issuance, and code signing — and industry has concluded the \
+tradeoff is acceptable given the 10-year threat window. This project demonstrates that \
+for DNS specifically, the overhead is well within acceptable bounds.
+
+Q: Conventional PRNGs like os.urandom use kernel entropy sources and are considered \
+cryptographically secure. Why does QRNG add meaningful security? Isn't entropy the same?
+A: The distinction is subtle but important at the trust model level. os.urandom draws from \
+/dev/urandom (Linux) or CryptGenRandom (Windows), seeded from hardware interrupts, disk I/O \
+timing, and other environmental noise. This is *computationally secure* — an adversary who \
+cannot observe the seed cannot predict the output. However, the seed is *deterministic given \
+sufficient system observation*. An adversary who compromises the kernel, hypervisor, or \
+hardware RNG (via side-channel or supply chain) can predict all PRNG output. QRNG provides \
+*information-theoretic* randomness: quantum measurement outcomes are fundamentally \
+unpredictable by the laws of physics (Born's rule), not just computationally hard. No \
+amount of observing the qubit before measurement helps — the outcome is genuinely random. \
+For nonce generation in PQ signature schemes, a compromised PRNG seed could allow signature \
+forgery. For DNS specifically, a predictable nonce in a signed response could enable replay \
+attacks. The practical benefit is highest in adversarial environments (government, finance, \
+critical infrastructure) where PRNG compromise is a realistic threat model. The cost is \
+~0.3ms for a Redis LPOP — essentially free. For a hackathon demo, QRNG also illustrates \
+an important point: quantum technology appears on both sides of the security equation, as \
+both a threat (Shor's) and a defense tool (QRNG).
 
 ## Guidelines
 - Explain concepts clearly for a general audience — minimal jargon, visual analogies
@@ -219,8 +269,8 @@ async def chat(
     messages.append({"role": "user", "content": content})
 
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-        response = client.messages.create(
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+        response = await client.messages.create(
             model="claude-sonnet-4-20250514",
             max_tokens=1024,
             system=SYSTEM_PROMPT,

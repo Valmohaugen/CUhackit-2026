@@ -32,9 +32,21 @@ st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:wght@400&family=Inter:wght@300;400;500;600&display=swap');
 
-html, body, [class*="css"] {
+/* Force ALL text black — overrides every Streamlit scoped style */
+* {
+    color: #111111 !important;
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-    color: #333333;
+}
+
+/* Exceptions: elements that legitimately need white text */
+.stButton > button[kind="primary"],
+.stButton > button[kind="primary"] *,
+.stButton > button[kind="primary"] p,
+.stProgress > div > div,
+[data-testid="stNotificationContentSuccess"] *,
+[data-testid="stNotificationContentError"] *,
+[data-testid="stNotificationContentWarning"] * {
+    color: #FFFFFF !important;
 }
 
 /* Hide sidebar completely */
@@ -64,11 +76,11 @@ h2 {
     font-weight: 600 !important;
     font-size: 1.5rem !important;
 }
-h3 {
-    color: #333333 !important;
+h3, h4, h5, h6 {
+    color: #1a1a1a !important;
     font-weight: 600 !important;
-    font-size: 1.15rem !important;
 }
+h3 { font-size: 1.15rem !important; }
 
 /* Top header bar */
 .stApp > header {
@@ -186,6 +198,14 @@ a[href^="#"], .stMarkdown a.header-link,
 h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
 [data-testid="stHeaderActionElements"],
 [data-testid="stStatusWidget"] {
+    display: none !important;
+}
+
+/* Hide Streamlit developer toolbar (Deploy, Manage, Rerun) — these are
+   internal dev tools not relevant to end users of the deployed app */
+[data-testid="stToolbarActions"],
+[data-testid="stAppDeployButton"],
+.stDecoration {
     display: none !important;
 }
 

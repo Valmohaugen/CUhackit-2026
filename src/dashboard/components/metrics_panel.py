@@ -219,47 +219,142 @@ Each qubit: 50% |0⟩, 50% |1⟩
 def _render_history() -> None:
     """Render historical query time-series charts."""
     import pandas as pd
+    import matplotlib.pyplot as plt
     from collections import Counter
 
-    limit = st.slider("History limit", 50, 500, 200, key="history_limit")
+    limit = st.slider(
+        "History limit",
+        50, 500, 200,
+        key="history_limit",
+        help="Number of most recent queries to include in historical charts.",
+    )
 
     data = get_history(limit)
     if not data:
         st.info("No historical data yet. Run some DNS queries first.")
         return
 
-    st.metric("Historical Queries", len(data))
+    st.metric(
+        "Queries Loaded",
+        len(data),
+        help="Total number of historical DNS queries available for analysis.",
+    )
 
-    # Latency over time
-    st.markdown("#### Latency Over Time")
+    # -------------------------------------------------------------------------
+    # Chart 1: Request Volume Breakdown Over Time
+    # -------------------------------------------------------------------------
+    st.markdown("### Request Volume Breakdown Over Time")
+    st.caption(
+        "Stacked bar chart showing how many queries used each signature scheme per time window. "
+        "Helps visualize scheme usage trends as you switch between configurations."
+    )
+
     chart_rows = []
-    for q in reversed(data):  # oldest first for line chart
-        row = {
+    for q in reversed(data):  # oldest first
+        chart_rows.append({
             "timestamp": q.get("timestamp", ""),
-            "Total (ms)": q.get("latency_ms", 0),
-            "DNS (ms)": q.get("dns_lookup_ms", 0),
-            "Sign (ms)": q.get("sign_ms", 0),
-            "Verify (ms)": q.get("verify_ms", 0),
-        }
-        chart_rows.append(row)
+            "scheme": q.get("scheme", "unknown"),
+            "seed_source": q.get("seed_source", "unknown"),
+        })
 
     if chart_rows:
-        df = pd.DataFrame(chart_rows)
-        if "timestamp" in df.columns:
-            df["timestamp"] = pd.to_datetime(df["timestamp"], errors="coerce")
-            df = df.set_index("timestamp")
-        st.line_chart(df)
+        df_vol = pd.DataFrame(chart_rows)
+        df_vol["timestamp"] = pd.to_datetime(df_vol["timestamp"], errors="coerce")
+        df_vol = df_vol.dropna(subset=["timestamp"])
 
-    # Scheme usage distribution
-    st.markdown("#### Scheme Usage Distribution")
-    scheme_counts = Counter(q.get("scheme", "unknown") for q in data)
-    if scheme_counts:
-        df_scheme = pd.DataFrame.from_dict(scheme_counts, orient="index", columns=["Count"])
-        st.bar_chart(df_scheme)
+        if not df_vol.empty:
+            # Group into ~20 time windows for readability
+            df_vol = df_vol.sort_values("timestamp")
+            n_bins = min(20, len(df_vol))
+            df_vol["window"] = pd.cut(
+                df_vol["timestamp"].view("int64"),
+                bins=n_bins,
+                labels=False,
+            )
+            scheme_pivot = (
+                df_vol.groupby(["window", "scheme"])
+                .size()
+                .unstack(fill_value=0)
+            )
+            # Use window index as simple x-axis
+            scheme_pivot.index = [f"W{i+1}" for i in scheme_pivot.index]
+            st.bar_chart(scheme_pivot)
+        else:
+            st.info("Not enough timestamp data to build volume chart.")
 
-    # Seed source distribution
-    st.markdown("#### Seed Source Distribution")
-    source_counts = Counter(q.get("seed_source", "unknown") for q in data)
-    if source_counts:
-        df_source = pd.DataFrame.from_dict(source_counts, orient="index", columns=["Count"])
-        st.bar_chart(df_source)
+    # Scheme and source summary
+    col_s, col_src = st.columns(2)
+    with col_s:
+        st.markdown("**Queries by Scheme**")
+        scheme_counts = Counter(q.get("scheme", "unknown") for q in data)
+        df_sc = pd.DataFrame.from_dict(scheme_counts, orient="index", columns=["Count"])
+        st.bar_chart(df_sc)
+    with col_src:
+        st.markdown("**Queries by Seed Source**")
+        source_counts = Counter(q.get("seed_source", "unknown") for q in data)
+        df_src = pd.DataFrame.from_dict(source_counts, orient="index", columns=["Count"])
+        st.bar_chart(df_src)
+
+    st.markdown("---")
+
+    # -------------------------------------------------------------------------
+    # Chart 2: Per-Operation Latency Distribution (Box Plots)
+    # -------------------------------------------------------------------------
+    st.markdown("### Per-Operation Latency Distribution")
+    st.caption(
+        "Box plots showing the spread of latency for each operation: DNS lookup, "
+        "PQ signing, signature verification, and total end-to-end. "
+        "The box spans the 25th–75th percentile (IQR); the line is the median; "
+        "whiskers extend to 1.5× IQR; dots are outliers."
+    )
+
+    dns_times = [q.get("dns_lookup_ms", 0) for q in data if q.get("dns_lookup_ms")]
+    sign_times = [q.get("sign_ms", 0) for q in data if q.get("sign_ms")]
+    verify_times = [q.get("verify_ms", 0) for q in data if q.get("verify_ms")]
+    total_times = [q.get("latency_ms", 0) for q in data if q.get("latency_ms")]
+
+    plot_data = {}
+    if dns_times:
+        plot_data["DNS Lookup"] = dns_times
+    if sign_times:
+        plot_data["Sign"] = sign_times
+    if verify_times:
+        plot_data["Verify"] = verify_times
+    if total_times:
+        plot_data["Total"] = total_times
+
+    if plot_data:
+        fig, ax = plt.subplots(figsize=(9, 4))
+        ax.boxplot(
+            plot_data.values(),
+            labels=plot_data.keys(),
+            patch_artist=True,
+            boxprops=dict(facecolor="#F56600", alpha=0.6),
+            medianprops=dict(color="#1a1a1a", linewidth=2),
+            whiskerprops=dict(color="#666666"),
+            capprops=dict(color="#666666"),
+            flierprops=dict(marker="o", color="#F56600", alpha=0.4, markersize=4),
+        )
+        ax.set_ylabel("Latency (ms)")
+        ax.set_title("DNS Operation Latency — Box Plot Distribution")
+        ax.grid(axis="y", alpha=0.3)
+        fig.tight_layout()
+        st.pyplot(fig)
+        plt.close(fig)
+
+    # Summary stats table
+    if plot_data:
+        import numpy as np
+        summary_rows = []
+        for op, times in plot_data.items():
+            arr = np.array(times)
+            summary_rows.append({
+                "Operation": op,
+                "Median (ms)": f"{np.median(arr):.2f}",
+                "Mean (ms)": f"{np.mean(arr):.2f}",
+                "50th Pct (ms)": f"{np.percentile(arr, 50):.2f}",
+                "95th Pct (ms)": f"{np.percentile(arr, 95):.2f}",
+                "99th Pct (ms)": f"{np.percentile(arr, 99):.2f}",
+                "Max (ms)": f"{np.max(arr):.2f}",
+            })
+        st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
