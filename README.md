@@ -34,14 +34,6 @@ NIST finalized three post-quantum cryptographic standards in 2024 (FIPS 203, 204
 
 > **The core thesis**: post-quantum migration for DNS cannot wait until quantum computers arrive. The HNDL threat exists today, NIST standards are final, and the performance overhead is acceptable. This project demonstrates all three points interactively.
 
----
-
-## Overview
-
-Today's internet relies on RSA and elliptic curve cryptography (ECC) to secure DNS, TLS, and digital signatures. These algorithms will be broken by a sufficiently powerful quantum computer running **Shor's algorithm** [[1]](#references). Adversaries are already performing **Harvest-Now, Decrypt-Later (HNDL)** attacks — recording encrypted traffic today with the expectation of decrypting it once large-scale quantum computers arrive [[3, 4]](#references).
-
-Quantum DNS Shield demonstrates a practical migration path: it performs **real DNS resolution** with NIST-standardized post-quantum signatures, generates **quantum random numbers** via Qiskit circuits, and benchmarks PQ vs classical performance — all accessible through an interactive dashboard.
-
 ## Features
 
 - **Post-Quantum DNS Signing** — ML-DSA-65 (Dilithium), Falcon-512, SLH-DSA-128 (SPHINCS+) via liboqs, with RSA-2048 classical baseline and cached verifier instances for reduced latency
@@ -56,7 +48,7 @@ Quantum DNS Shield demonstrates a practical migration path: it performs **real D
 - **Latency Distribution** — P50/P95/P99 percentile analysis with histograms across schemes
 - **QRNG vs PRNG Entropy Comparison** — Shannon entropy, chi-squared, serial correlation, and runs test with numeric values alongside all charts
 - **Side-by-Side Comparison** — Resolve the same domain across multiple scheme/source combinations with numeric latency captions
-- **AI Assistant** — Claude-powered chatbot tab with context-aware responses using benchmark and entropy data
+- **AI Assistant** — GPT-4o-mini-powered chatbot tab with context-aware responses using benchmark and entropy data
 - **Real-Time Dashboard** — Streamlit with auto-refreshing live metrics (5-second interval), Enter-key form submission, configurable toggles
 - **AWS CDK Infrastructure** — ECS Fargate, ElastiCache Redis, Lambda QRNG, ALB, CloudWatch, SNS alerting
 
@@ -272,7 +264,7 @@ pytest tests/ -v
 | POST | `/api/attack/shors` | Start Shor's algorithm (background task) |
 | GET | `/api/attack/shors` | Poll Shor's status and result |
 | GET | `/api/attack/security-margin` | Security margin analysis per scheme |
-| POST | `/api/chatbot` | AI assistant (requires ANTHROPIC_API_KEY) |
+| POST | `/api/chatbot` | AI assistant (requires OPENAI_API_KEY) |
 
 ### API Examples
 
@@ -391,7 +383,7 @@ The Streamlit dashboard has 5 main tabs with a clean, sidebar-free layout:
 - **Attack Theater** — Generalized Shor's algorithm (factors N=15 to 91+) with circuit visualization, measurement histograms, quantum attack timing comparison, HNDL timeline with color-coded urgency, threat model matrix, and security margin analysis
 - **Benchmarks** — Keygen/sign/verify timing with fastest-scheme recommendation, latency distribution histograms with P50/P95/P99, QRNG vs PRNG entropy comparison with numeric values alongside all charts
 - **Live Metrics** — Auto-refreshing query feed (5-second interval), QRNG pool status, quantum circuit visualization, entropy extraction pipeline, historical time-series charts
-- **AI Chat** — Claude-powered assistant with context from recent benchmarks and entropy data
+- **AI Chat** — GPT-4o-mini assistant with context from recent benchmarks and entropy data
 
 ## Environment Variables
 
@@ -401,7 +393,7 @@ The Streamlit dashboard has 5 main tabs with a clean, sidebar-free layout:
 | `REDIS_PORT` | `6379` | Redis server port |
 | `REDIS_PASSWORD` | *(empty)* | Redis AUTH password (optional) |
 | `IBM_QUANTUM_TOKEN` | *(empty)* | IBM Quantum Platform API token; leave empty for simulator-only |
-| `ANTHROPIC_API_KEY` | *(empty)* | Anthropic Claude API key for AI chatbot |
+| `OPENAI_API_KEY` | *(empty)* | OpenAI API key for AI chatbot (GPT-4o-mini) |
 | `AWS_REGION` | `us-east-1` | AWS region for Lambda/S3 deployments |
 | `AUDIT_BUCKET` | *(empty)* | S3 bucket for QRNG audit logs; empty disables S3 logging |
 | `LOG_LEVEL` | `DEBUG` | Python logging level (DEBUG, INFO, WARNING, ERROR) |
@@ -446,7 +438,7 @@ CUhackit-2026/
 │   ├── modules/                # Core business logic
 │   │   ├── attack_theater.py   # Shor's algorithm, HNDL, security margins
 │   │   ├── benchmarks.py       # Scheme timing, statistical tests
-│   │   ├── chatbot.py          # Claude API integration
+│   │   ├── chatbot.py          # OpenAI GPT-4o-mini integration
 │   │   ├── dns_resolver.py     # PQ-signed DNS resolution pipeline
 │   │   ├── migration_matrix.py # Migration cost/risk analysis (5 scenarios)
 │   │   ├── pq_crypto.py        # liboqs signature wrapper + factories
@@ -560,7 +552,7 @@ Typical latency breakdown for a single DNS resolution (local Docker, ML-DSA-65, 
 
 - **Redis security** — In production, use `REDIS_PASSWORD` and enable TLS. ElastiCache provides encryption at rest and in transit.
 
-- **Secret management** — IBM Quantum tokens and Anthropic API keys should use AWS Secrets Manager (configured in CDK stack), not environment variables in production.
+- **Secret management** — IBM Quantum tokens and the OpenAI API key should use AWS Secrets Manager (configured in CDK stack), not environment variables in production.
 
 - **Audit logging** — When `AUDIT_BUCKET` is set, every QRNG batch writes provenance metadata to S3, enabling full traceability of seed generation.
 
@@ -584,8 +576,8 @@ Run the local seed fill script: `python scripts/local_seed_fill.py`. This genera
 **Shor's algorithm timeout:**
 Larger semiprimes (N=77, 91) require 15+ qubits and 16,384 shots, which can take 30-60 seconds on AerSimulator. The API runs Shor's as a background task — poll `GET /api/attack/shors` for status.
 
-**Missing ANTHROPIC_API_KEY:**
-The AI Chat tab requires a valid Anthropic API key. Set `ANTHROPIC_API_KEY` in `.env` or pass it as an environment variable. The rest of the dashboard functions without it.
+**Missing OPENAI_API_KEY:**
+The AI Chat tab requires a valid OpenAI API key. Set `OPENAI_API_KEY` in `.env` or pass it as an environment variable. The rest of the dashboard functions without it.
 
 **Docker networking issues:**
 If the Streamlit dashboard can't reach the API, ensure `API_URL=http://localhost:8000` is set. Inside Docker Compose, the app container runs both services and uses `localhost`.
@@ -596,7 +588,7 @@ If the Streamlit dashboard can't reach the API, ensure `API_URL=http://localhost
 - **Frontend**: Streamlit
 - **Crypto**: liboqs (ML-DSA-65, Falcon-512, SLH-DSA-128), oqs-python
 - **Quantum**: Qiskit 2.x, qiskit-aer (AerSimulator), optional IBM Quantum
-- **AI**: Anthropic Claude API
+- **AI**: OpenAI API (GPT-4o-mini)
 - **State**: Redis (ElastiCache in AWS)
 - **Infra**: AWS CDK, ECS Fargate, Lambda, ALB, S3, CloudWatch, SNS
 - **Container**: Docker multi-stage build
