@@ -9,6 +9,7 @@ Provides:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from contextlib import asynccontextmanager
 
@@ -20,10 +21,30 @@ from src.redis_client import close_redis, get_redis, init_defaults
 
 logger = logging.getLogger(__name__)
 
+QRNG_REFILL_INTERVAL = 300  # 5 minutes
+
+
+def _run_qrng_batch() -> None:
+    """Run one QRNG seed generation batch (synchronous)."""
+    from src.lambda_handler.handler import lambda_handler
+    lambda_handler({}, None)
+
+
+async def _qrng_refill_loop() -> None:
+    """Background loop that refills the QRNG seed pool every 5 minutes."""
+    while True:
+        await asyncio.sleep(QRNG_REFILL_INTERVAL)
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _run_qrng_batch)
+            logger.info("[api] QRNG background refill completed")
+        except Exception:
+            logger.warning("[api] QRNG background refill failed", exc_info=True)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Manage Redis connection lifecycle."""
+    """Manage Redis connection lifecycle and background QRNG refill."""
     # Startup
     logger.info("[api] Starting Quantum DNS Shield API")
     r = await get_redis()
@@ -31,9 +52,14 @@ async def lifespan(app: FastAPI):
     app.state.redis = r  # Stored on app.state so every route handler can access it via request.app.state.redis.
     logger.info("[api] Redis initialized with defaults")
 
+    # Start background QRNG seed refill (runs every 5 minutes)
+    refill_task = asyncio.create_task(_qrng_refill_loop())
+    logger.info("[api] QRNG background refill scheduled every %ds", QRNG_REFILL_INTERVAL)
+
     yield
 
     # Shutdown
+    refill_task.cancel()
     await close_redis()
     logger.info("[api] Shutdown complete")
 

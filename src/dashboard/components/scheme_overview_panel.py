@@ -22,13 +22,7 @@ def render_scheme_overview() -> None:
         "Compare all signature schemes across performance, size, and entropy metrics."
     )
 
-    # Auto-load or use cached benchmark data
-    if "overview_bench" not in st.session_state:
-        with st.spinner("Loading scheme benchmarks..."):
-            data = get_benchmarks()
-        if data:
-            st.session_state["overview_bench"] = data
-
+    # Load benchmark data on demand (button click) to avoid expensive API calls on page load
     data = st.session_state.get("overview_bench")
     if not data:
         if st.button("Load Scheme Data", type="primary", key="overview_load"):
@@ -58,7 +52,7 @@ def render_scheme_overview() -> None:
             "Verify (ms)": entry.get("verify_ms", 0),
         })
     timing_df = pd.DataFrame(timing_rows).set_index("Scheme")
-    st.bar_chart(timing_df)
+    st.bar_chart(timing_df, x_label="Scheme", y_label="Time (ms)")
 
     # Numeric caption
     captions = []
@@ -83,7 +77,7 @@ def render_scheme_overview() -> None:
             "Signature (bytes)": entry.get("signature_bytes", 0),
         })
     size_df = pd.DataFrame(size_rows).set_index("Scheme")
-    st.bar_chart(size_df)
+    st.bar_chart(size_df, x_label="Scheme", y_label="Size (bytes)")
 
     # Numeric caption
     size_captions = []
@@ -115,12 +109,6 @@ def render_scheme_overview() -> None:
     # --- 4. QRNG vs PRNG Latency per Scheme ---
     st.markdown("---")
     st.markdown("#### QRNG vs PRNG Latency per Scheme")
-
-    if "overview_qrng_prng" not in st.session_state:
-        with st.spinner("Resolving across all schemes with QRNG and PRNG..."):
-            qp_results = _resolve_all_schemes_both_sources()
-        if qp_results:
-            st.session_state["overview_qrng_prng"] = qp_results
 
     qp_data = st.session_state.get("overview_qrng_prng")
     if qp_data:
@@ -176,7 +164,7 @@ def _render_qrng_prng_charts(results: list[dict]) -> None:
 
     if latency_rows:
         lat_df = pd.DataFrame(latency_rows).set_index("Scheme")
-        st.bar_chart(lat_df)
+        st.bar_chart(lat_df, x_label="Scheme", y_label="Latency (ms)")
 
         # Numeric captions with deltas
         captions = []
@@ -203,7 +191,15 @@ def _render_qrng_prng_charts(results: list[dict]) -> None:
 
     if sign_rows:
         sign_df = pd.DataFrame(sign_rows).set_index("Scheme")
-        st.bar_chart(sign_df)
+        st.bar_chart(sign_df, x_label="Scheme", y_label="Sign Time (ms)")
+        captions = []
+        for row in sign_rows:
+            delta = row["QRNG Sign (ms)"] - row["PRNG Sign (ms)"]
+            captions.append(
+                f"{row['Scheme']}: QRNG={row['QRNG Sign (ms)']:.2f}, "
+                f"PRNG={row['PRNG Sign (ms)']:.2f} ({delta:+.2f})"
+            )
+        st.caption(" | ".join(captions))
 
     # Verification time QRNG vs PRNG
     st.markdown("#### Verification Time: QRNG vs PRNG")
@@ -220,7 +216,15 @@ def _render_qrng_prng_charts(results: list[dict]) -> None:
 
     if verify_rows:
         verify_df = pd.DataFrame(verify_rows).set_index("Scheme")
-        st.bar_chart(verify_df)
+        st.bar_chart(verify_df, x_label="Scheme", y_label="Verify Time (ms)")
+        captions = []
+        for row in verify_rows:
+            delta = row["QRNG Verify (ms)"] - row["PRNG Verify (ms)"]
+            captions.append(
+                f"{row['Scheme']}: QRNG={row['QRNG Verify (ms)']:.2f}, "
+                f"PRNG={row['PRNG Verify (ms)']:.2f} ({delta:+.2f})"
+            )
+        st.caption(" | ".join(captions))
 
     # Seed fetch time QRNG vs PRNG
     st.markdown("#### Seed Fetch Time: QRNG vs PRNG")
@@ -237,5 +241,5 @@ def _render_qrng_prng_charts(results: list[dict]) -> None:
 
     if seed_rows:
         seed_df = pd.DataFrame(seed_rows).set_index("Scheme")
-        st.bar_chart(seed_df)
+        st.bar_chart(seed_df, x_label="Scheme", y_label="Seed Fetch Time (ms)")
         st.caption("QRNG seeds are fetched from the Redis pool; PRNG uses os.urandom (near-zero latency).")

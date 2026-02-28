@@ -94,6 +94,8 @@ class EntropyComparison:
 
     qrng_shannon_entropy: float
     prng_shannon_entropy: float
+    qrng_min_entropy: float
+    prng_min_entropy: float
     qrng_chi_squared: float
     prng_chi_squared: float
     qrng_chi_squared_p: float
@@ -103,6 +105,23 @@ class EntropyComparison:
     qrng_runs_test_p: float
     prng_runs_test_p: float
     sample_size: int
+    qrng_pool_bits: int
+    qrng_fallback_bits: int
+    refreshed_at_epoch: float
+
+
+# Min-entropy: H_∞(X) = -log₂(max_i p_i), the correct metric for cryptographic applications
+# (NIST SP 800-90B Sec. 3.1). Min-entropy is always ≤ Shannon entropy and represents the
+# worst-case predictability of the source.
+def _min_entropy(data: np.ndarray) -> float:
+    """Compute min-entropy of binary data."""
+    if len(data) == 0:
+        return 0.0
+    _, counts = np.unique(data, return_counts=True)
+    max_prob = np.max(counts) / len(data)
+    if max_prob <= 0:
+        return 0.0
+    return float(-np.log2(max_prob))
 
 
 # Shannon entropy: H(X) = -Σ p_i log₂(p_i), ideal H = 1.0 for unbiased binary source
@@ -211,28 +230,33 @@ async def compare_entropy(
     dict
         EntropyComparison as a dictionary.
     """
-    # Get QRNG data from seed pool
+    # Get QRNG data from the same seed-consumption path as the resolver so the
+    # benchmark reflects actual runtime behavior and can report fallbacks.
     qrng_bits = []
     seeds_needed = (sample_size + 255) // 256  # 32 bytes = 256 bits per seed
-    raw_seeds = await r.lrange(RedisKeys.SEED_POOL, 0, seeds_needed - 1)
+    qrng_pool_bits = 0
+    qrng_fallback_bits = 0
 
-    for raw in raw_seeds:
-        seed_bytes = bytes.fromhex(raw) if isinstance(raw, str) else raw
+    for _ in range(seeds_needed):
+        raw_seed = None
+        try:
+            raw_seed = await r.lpop(RedisKeys.SEED_POOL)
+        except Exception as e:
+            logger.warning("[benchmarks] Redis error during entropy LPOP: %s", e)
+
+        if raw_seed is None:
+            seed_bytes = os.urandom(32)
+            qrng_fallback_bits += 256
+        else:
+            seed_bytes = bytes.fromhex(raw_seed) if isinstance(raw_seed, str) else raw_seed
+            qrng_pool_bits += 256
         for byte in seed_bytes:
             for bit in range(8):
                 qrng_bits.append((byte >> bit) & 1)
 
-    # If not enough QRNG data, pad with what we have (or use simulator)
-    if len(qrng_bits) < sample_size:
-        logger.warning(
-            "[benchmarks] Only %d QRNG bits available (wanted %d), padding with PRNG",
-            len(qrng_bits),
-            sample_size,
-        )
-        while len(qrng_bits) < sample_size:
-            qrng_bits.append(int.from_bytes(os.urandom(1)) & 1)
-
     qrng_data = np.array(qrng_bits[:sample_size], dtype=np.uint8)
+    qrng_pool_bits = min(qrng_pool_bits, sample_size)
+    qrng_fallback_bits = max(0, sample_size - qrng_pool_bits)
 
     # Generate PRNG data
     prng_bytes = os.urandom(sample_size // 8 + 1)
@@ -249,6 +273,8 @@ async def compare_entropy(
     comparison = EntropyComparison(
         qrng_shannon_entropy=_shannon_entropy(qrng_data),
         prng_shannon_entropy=_shannon_entropy(prng_data),
+        qrng_min_entropy=_min_entropy(qrng_data),
+        prng_min_entropy=_min_entropy(prng_data),
         qrng_chi_squared=qrng_chi2,
         prng_chi_squared=prng_chi2,
         qrng_chi_squared_p=qrng_chi2_p,
@@ -258,6 +284,9 @@ async def compare_entropy(
         qrng_runs_test_p=_runs_test(qrng_data),
         prng_runs_test_p=_runs_test(prng_data),
         sample_size=sample_size,
+        qrng_pool_bits=qrng_pool_bits,
+        qrng_fallback_bits=qrng_fallback_bits,
+        refreshed_at_epoch=time.time(),
     )
 
     # Cache result

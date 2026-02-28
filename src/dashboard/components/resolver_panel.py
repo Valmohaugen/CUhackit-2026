@@ -1,49 +1,27 @@
-"""DNS Resolver panel: Query domains and view signed responses.
+"""DNS Resolver panel: View signed DNS responses.
 
 Provides:
-  - render_resolver_panel: Domain input, resolve button, result display
-    with per-step latency breakdown and quantum readiness indicators
+  - render_resolver_panel: Result display with per-step latency breakdown
+    and quantum readiness indicators. The domain input form lives in app.py
+    so it remains sticky across all tabs.
 """
 
 from __future__ import annotations
 
 import streamlit as st
 
-from src.dashboard.utils import resolve_domain, get_qrng_status
+from src.dashboard.utils import get_qrng_status
 
 
 def render_resolver_panel() -> None:
-    """Render the DNS resolution demo panel."""
+    """Render the DNS resolution results panel."""
     st.header("DNS Resolver")
 
-    with st.form("resolver_form"):
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            domain = st.text_input(
-                "Domain to resolve",
-                value="example.com",
-                placeholder="example.com",
-            )
-        with col2:
-            st.markdown("<br>", unsafe_allow_html=True)
-            resolve_btn = st.form_submit_button(
-                "Resolve", type="primary", use_container_width=True,
-            )
-
-    if resolve_btn and domain:
-        st.session_state["resolved_domain"] = domain
-        with st.spinner("Resolving..."):
-            result = resolve_domain(domain)
-
-        if result:
-            st.session_state["last_resolve_result"] = result
-            _render_result(result)
-        else:
-            st.error("Resolution failed. Check API connection.")
-
-    # Show previous result if available and no new submission
-    elif st.session_state.get("last_resolve_result"):
-        _render_result(st.session_state["last_resolve_result"])
+    result = st.session_state.get("last_resolve_result")
+    if result:
+        _render_result(result)
+    else:
+        st.info("Enter a domain above and click **Resolve** to query DNS.")
 
 
 def _render_result(result: dict) -> None:

@@ -45,6 +45,7 @@ class ResolveResult:
     sign_ms: float = 0.0
     verify_ms: float = 0.0
     client_ip: str = ""
+    entropy_source_detail: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -150,6 +151,12 @@ async def resolve(
     t_end = time.perf_counter()
     latency_ms = round((t_end - t_start) * 1000, 2)
 
+    # Entropy provenance: record which tier provided the entropy
+    if seed_source == SeedSource.QRNG:
+        entropy_detail = "qrng_pool"
+    else:
+        entropy_detail = "prng_fallback"
+
     result = ResolveResult(
         domain=domain,
         ip_addresses=ip_addresses,
@@ -164,6 +171,7 @@ async def resolve(
         sign_ms=sign_ms,
         verify_ms=verify_ms,
         client_ip=client_ip,
+        entropy_source_detail=entropy_detail,
     )
 
     # Step 6: Log to Redis

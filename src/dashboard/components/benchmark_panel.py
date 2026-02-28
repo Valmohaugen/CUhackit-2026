@@ -133,7 +133,7 @@ def _render_timing() -> None:
             })
     if chart_data:
         df = pd.DataFrame(chart_data).set_index("Scheme")
-        st.bar_chart(df)
+        st.bar_chart(df, x_label="Scheme", y_label="Time (ms)")
 
         # Numeric summary table
         summary = df.copy()
@@ -158,20 +158,31 @@ def _render_distribution() -> None:
         "latency distribution and compute percentiles (P50/P95/P99)."
     )
 
-    col_domain, col_iter = st.columns([3, 1])
-    with col_domain:
-        domain = st.text_input("Domain", value="example.com", key="dist_domain")
-    with col_iter:
-        iterations = st.number_input("Iterations", min_value=5, max_value=50, value=10, key="dist_iter")
+    with st.form("dist_controls_form"):
+        st.markdown(
+            '<span class="section-controls-form-marker"></span>',
+            unsafe_allow_html=True,
+        )
+        col_domain, col_iter = st.columns([3, 1])
+        with col_domain:
+            domain = st.text_input("Domain", value="example.com", key="dist_domain")
+        with col_iter:
+            iterations = st.number_input("Iterations", min_value=5, max_value=50, value=10, key="dist_iter")
 
-    schemes = st.multiselect(
-        "Schemes to test",
-        ["ml-dsa-65", "falcon-512", "slh-dsa-128", "rsa-2048"],
-        default=["ml-dsa-65", "rsa-2048"],
-        key="dist_schemes",
-    )
+        schemes = st.multiselect(
+            "Schemes to test",
+            ["ml-dsa-65", "falcon-512", "slh-dsa-128", "rsa-2048"],
+            default=["ml-dsa-65", "rsa-2048"],
+            key="dist_schemes",
+        )
 
-    if st.button("Run Distribution Analysis", type="primary") and schemes:
+        run_distribution = st.form_submit_button(
+            "Run Distribution Analysis",
+            type="primary",
+            use_container_width=True,
+        )
+
+    if run_distribution and schemes:
         import numpy as np
         import pandas as pd
 
@@ -252,7 +263,12 @@ def _render_distribution() -> None:
         labels = [f"{edges[i]:.1f}-{edges[i+1]:.1f}" for i in range(len(counts))]
         hist_df = pd.DataFrame({"Count": counts}, index=labels)
         hist_df.index.name = "Latency Range (ms)"
-        st.bar_chart(hist_df)
+        st.bar_chart(hist_df, x_label="Latency Range (ms)", y_label="Sample Count")
+        st.caption(
+            f"Range: {min(latencies):.1f}–{max(latencies):.1f} ms | "
+            f"Samples: {len(latencies)} | "
+            f"Median: {np.median(arr):.1f} ms"
+        )
 
         st.markdown("---")
 
@@ -272,13 +288,26 @@ def _render_entropy() -> None:
             data = get_entropy()
         if data:
             st.session_state["entropy_data"] = data
+            st.session_state.pop("entropy_error", None)
+        else:
+            st.session_state["entropy_error"] = (
+                "Entropy refresh failed. The results below are the last successful run."
+            )
 
     data = st.session_state.get("entropy_data")
+    if st.session_state.get("entropy_error"):
+        st.error(st.session_state["entropy_error"])
     if not data:
         st.info("Click **Run Entropy Comparison** to compare QRNG vs PRNG randomness quality.")
         return
 
     import pandas as pd
+    from datetime import datetime
+
+    refreshed_at = data.get("refreshed_at_epoch")
+    refreshed_label = "unknown"
+    if isinstance(refreshed_at, (int, float)):
+        refreshed_label = datetime.fromtimestamp(refreshed_at).strftime("%H:%M:%S")
 
     # --- Side-by-side metric cards (PRNG left, QRNG right — matches bar chart order) ---
     col_prng, col_qrng = st.columns(2)
@@ -299,7 +328,23 @@ def _render_entropy() -> None:
         st.metric("Serial Correlation", f"{data.get('qrng_serial_correlation', 0):.6f}")
         st.metric("Runs Test p-value", f"{data.get('qrng_runs_test_p', 0):.4f}")
 
-    st.caption(f"Sample size: {data.get('sample_size', 0):,} bits")
+    st.caption(
+        f"Sample size: {data.get('sample_size', 0):,} bits | "
+        f"Last refreshed: {refreshed_label}"
+    )
+    qrng_pool_bits = int(data.get("qrng_pool_bits", data.get("sample_size", 0)) or 0)
+    qrng_fallback_bits = int(data.get("qrng_fallback_bits", 0) or 0)
+    if qrng_fallback_bits > 0:
+        if qrng_pool_bits == 0:
+            st.warning(
+                "QRNG pool is empty, so the QRNG column is currently using PRNG fallback bits. "
+                "Refill the pool to see a true QRNG-vs-PRNG comparison."
+            )
+        else:
+            st.warning(
+                f"QRNG sample used {qrng_pool_bits:,} true QRNG bits and "
+                f"{qrng_fallback_bits:,} PRNG fallback bits because the pool was low."
+            )
 
     # --- Comparison bar charts with numeric values ---
     st.markdown("---")
@@ -330,7 +375,7 @@ def _render_entropy() -> None:
         "Source": ["PRNG", "QRNG"],
         "Shannon Entropy (bits)": [prng_h, qrng_h],
     }).set_index("Source")
-    st.bar_chart(entropy_df)
+    st.bar_chart(entropy_df, x_label="Source", y_label="Shannon Entropy (bits)")
     st.caption(
         f"Ideal: 1.0 bit | PRNG: **{prng_h:.4f}** | QRNG: **{qrng_h:.4f}** | "
         f"Delta: {qrng_h - prng_h:+.6f}"
@@ -349,7 +394,7 @@ def _render_entropy() -> None:
         "Source": ["PRNG", "QRNG"],
         "Chi-Squared": [prng_chi2, qrng_chi2],
     }).set_index("Source")
-    st.bar_chart(chi2_df)
+    st.bar_chart(chi2_df, x_label="Source", y_label="Chi-Squared Statistic")
     st.caption(
         f"Lower is better | Critical value ≈ 293 | "
         f"PRNG: **{prng_chi2:.2f}** | QRNG: **{qrng_chi2:.2f}**"
@@ -368,7 +413,7 @@ def _render_entropy() -> None:
         "Source": ["PRNG", "QRNG"],
         "Serial Correlation |lag-1|": [prng_corr, qrng_corr],
     }).set_index("Source")
-    st.bar_chart(corr_df)
+    st.bar_chart(corr_df, x_label="Source", y_label="Serial Correlation |lag-1|")
     st.caption(
         f"Closer to 0 is better | PRNG: **{prng_corr:.6f}** | QRNG: **{qrng_corr:.6f}**"
     )
@@ -387,7 +432,7 @@ def _render_entropy() -> None:
         "PRNG": [prng_chi2_p, prng_runs_p],
         "QRNG": [qrng_chi2_p, qrng_runs_p],
     }).set_index("Test")
-    st.bar_chart(pval_df)
+    st.bar_chart(pval_df, x_label="Test", y_label="p-value")
     st.caption(
         f"Pass threshold: p > 0.01 | "
         f"Chi-Sq: PRNG={prng_chi2_p:.4f} ({'✓ PASS' if prng_chi2_p >= 0.01 else '✗ FAIL'}), "

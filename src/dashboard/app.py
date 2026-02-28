@@ -16,6 +16,7 @@ import streamlit as st
 
 from src.dashboard.components.sidebar import render_control_bar
 from src.dashboard.components.chatbot_panel import render_chat_tab
+from src.dashboard.utils import resolve_domain
 
 st.set_page_config(
     page_title="Quantum DNS Shield",
@@ -257,16 +258,13 @@ h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
     display: none !important;
 }
 
-<<<<<<< HEAD
-/* Hide Streamlit developer toolbar (Deploy, Manage, Rerun) — these are
-   internal dev tools not relevant to end users of the deployed app */
+/* Hide Streamlit developer toolbar */
 [data-testid="stToolbarActions"],
 [data-testid="stAppDeployButton"],
 .stDecoration {
     display: none !important;
 }
 
-=======
 /* Hide "Press Enter to submit form" instruction inside st.form */
 [data-testid="InputInstructions"],
 [data-testid="stFormSubmitButton"] p,
@@ -274,10 +272,28 @@ h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
     display: none !important;
 }
 
-/* Sticky DNS resolver form — pins to top on scroll */
-[data-testid="stForm"] {
+/* Sticky tier offsets */
+:root {
+    --sticky-global-controls-top: 0px;
+    --sticky-resolver-top: 75px;
+    --sticky-section-controls-top: 150px;
+}
+
+/* Sticky control bar form — pins settings to top on scroll */
+[data-testid="stForm"]:has(.control-form-marker) {
     position: sticky;
-    top: 0;
+    top: var(--sticky-global-controls-top);
+    z-index: 1000;
+    background: #FAFAFA;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #E8E8E8;
+}
+
+/* Sticky resolver form — stacks below control bar */
+[data-testid="stForm"]:has(.resolver-form-marker) {
+    position: sticky;
+    top: var(--sticky-resolver-top);
     z-index: 999;
     background: #FAFAFA;
     padding-top: 0.5rem;
@@ -285,7 +301,16 @@ h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
     border-bottom: 1px solid #E8E8E8;
 }
 
->>>>>>> 85c2b07 (visuals)
+/* Sticky per-section control rows — stack below global sticky forms */
+[data-testid="stForm"]:has(.section-controls-form-marker) {
+    position: sticky;
+    top: var(--sticky-section-controls-top);
+    z-index: 998;
+    background: #FAFAFA;
+    padding-top: 0.5rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #E8E8E8;
+}
 /* Expanders */
 .streamlit-expanderHeader {
     color: #333333 !important;
@@ -297,6 +322,27 @@ h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
 .stAlert p, .stAlert span,
 .stAlert [data-testid="stMarkdownContainer"] p {
     color: #333333 !important;
+}
+
+/* Prevent charts from hijacking two-finger trackpad scroll.
+   touch-action: pan-y lets the browser handle vertical scrolling natively
+   instead of passing it to the Vega-Lite zoom/pan handler. */
+[data-testid="stVegaLiteChart"],
+[data-testid="stVegaLiteChart"] canvas,
+[data-testid="stVegaLiteChart"] div,
+[data-testid="stArrowVegaLiteChart"],
+[data-testid="stArrowVegaLiteChart"] canvas,
+[data-testid="stArrowVegaLiteChart"] div,
+.stPlotlyChart,
+.stPlotlyChart div,
+[data-testid="stDataFrame"],
+[data-testid="stDataFrame"] div {
+    touch-action: pan-y !important;
+}
+/* Block wheel-event zoom on chart canvases so scrolling passes through */
+[data-testid="stVegaLiteChart"] canvas,
+[data-testid="stArrowVegaLiteChart"] canvas {
+    pointer-events: none !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -315,6 +361,37 @@ st.markdown(
 # ---------------------------------------------------------------------------
 
 render_control_bar()
+
+# ---------------------------------------------------------------------------
+# Sticky domain search form (visible on all tabs)
+# ---------------------------------------------------------------------------
+
+with st.form("resolver_form"):
+    st.markdown(
+        '<span class="resolver-form-marker"></span>',
+        unsafe_allow_html=True,
+    )
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        domain = st.text_input(
+            "Domain to resolve",
+            value=st.session_state.get("resolved_domain", "example.com"),
+            placeholder="example.com",
+        )
+    with col2:
+        st.markdown("<br>", unsafe_allow_html=True)
+        resolve_btn = st.form_submit_button(
+            "Resolve", type="primary", use_container_width=True,
+        )
+
+if resolve_btn and domain:
+    st.session_state["resolved_domain"] = domain
+    with st.spinner("Resolving..."):
+        result = resolve_domain(domain)
+    if result:
+        st.session_state["last_resolve_result"] = result
+    else:
+        st.error("Resolution failed. Check API connection.")
 
 st.markdown("---")
 

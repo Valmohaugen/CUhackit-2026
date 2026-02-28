@@ -254,6 +254,82 @@ def _shannon_entropy(data: np.ndarray) -> float:
 
 
 # ---------------------------------------------------------------------------
+# NIST SP 800-90B Continuous Health Tests
+# ---------------------------------------------------------------------------
+
+def _repetition_count_test(data: np.ndarray, cutoff: int = 20) -> bool:
+    """NIST SP 800-90B Sec. 4.4.1 — Repetition Count Test.
+
+    Flags if any single value appears more than `cutoff` times consecutively.
+    For a fair binary source, the probability of 20 identical consecutive bits
+    is 2^-19 ≈ 1.9e-6, providing a false-positive rate well below 1e-5.
+
+    Returns True if the test passes (no excessive repetitions).
+    """
+    if len(data) < 2:
+        return True
+    count = 1
+    for i in range(1, len(data)):
+        if data[i] == data[i - 1]:
+            count += 1
+            if count >= cutoff:
+                logger.warning(
+                    "[qrng] Repetition count test FAILED: %d consecutive identical values at index %d",
+                    count, i,
+                )
+                return False
+        else:
+            count = 1
+    return True
+
+
+def _adaptive_proportion_test(data: np.ndarray, window: int = 512, threshold: float = 0.66) -> bool:
+    """NIST SP 800-90B Sec. 4.4.2 — Adaptive Proportion Test.
+
+    Checks that no single value appears in more than `threshold` proportion
+    of any sliding window of size `window`. For a fair binary source with
+    window=512, the expected proportion is 0.5; a threshold of 0.66 corresponds
+    to ~7 standard deviations above the mean.
+
+    Returns True if the test passes.
+    """
+    if len(data) < window:
+        return True
+    for start in range(0, len(data) - window + 1, window):
+        chunk = data[start:start + window]
+        ones = int(np.sum(chunk))
+        proportion = max(ones, len(chunk) - ones) / len(chunk)
+        if proportion > threshold:
+            logger.warning(
+                "[qrng] Adaptive proportion test FAILED: proportion=%.3f at offset %d (threshold=%.2f)",
+                proportion, start, threshold,
+            )
+            return False
+    return True
+
+
+def _pre_extraction_entropy_check(raw_bits: np.ndarray, min_threshold: float = 0.9) -> float:
+    """Compute Shannon entropy on raw bits BEFORE extraction.
+
+    If raw entropy is below threshold, log a warning — the source may be
+    compromised. Toeplitz extraction can mask low-quality input, so this
+    check ensures the raw source is healthy (per technical review Sec. 3.2).
+
+    Returns the raw Shannon entropy value.
+    """
+    h_raw = _shannon_entropy(raw_bits) if len(raw_bits) > 10 else 0.0
+    if h_raw < min_threshold:
+        logger.warning(
+            "[qrng] Pre-extraction entropy LOW: H=%.4f (threshold=%.2f). "
+            "Raw source may be compromised.",
+            h_raw, min_threshold,
+        )
+    else:
+        logger.info("[qrng] Pre-extraction entropy OK: H=%.4f", h_raw)
+    return h_raw
+
+
+# ---------------------------------------------------------------------------
 # Seed production
 # ---------------------------------------------------------------------------
 
@@ -304,16 +380,37 @@ def lambda_handler(event: dict, context: object) -> dict:
     raw_bits = np.array([int(b) for b in raw_bits_str], dtype=np.uint8)
     logger.info("[qrng] Generated %d raw bits via %s", len(raw_bits), backend_used)
 
-    # Step 2: Apply entropy extraction
+    # Step 2: Pre-extraction entropy validation (Sec. 3.2 of technical review)
+    h_raw = _pre_extraction_entropy_check(raw_bits)
+
+    # Step 3: Apply entropy extraction
     extracted = _apply_extractor(raw_bits, extractor_method)
     logger.info("[qrng] Extracted %d bits (%.1f%% retention)",
                 len(extracted), len(extracted) / max(len(raw_bits), 1) * 100)
 
-    # Step 3: Validate entropy
-    h_min = _shannon_entropy(extracted) if len(extracted) > 10 else 0.0
-    logger.info("[qrng] Min-entropy: %.4f", h_min)
+    # Step 4: NIST SP 800-90B continuous health tests (Sec. 6.1 of technical review)
+    rep_pass = _repetition_count_test(extracted)
+    prop_pass = _adaptive_proportion_test(extracted)
+    health_pass = rep_pass and prop_pass
 
-    # Step 4: Convert to seeds
+    if not health_pass:
+        logger.warning("[qrng] Health tests FAILED — discarding batch (rep=%s, prop=%s)", rep_pass, prop_pass)
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "seeds_generated": 0,
+                "health_test_passed": False,
+                "repetition_count_passed": rep_pass,
+                "adaptive_proportion_passed": prop_pass,
+                "raw_entropy": round(h_raw, 4),
+            }),
+        }
+
+    # Step 5: Validate post-extraction entropy
+    h_min = _shannon_entropy(extracted) if len(extracted) > 10 else 0.0
+    logger.info("[qrng] Post-extraction entropy: %.4f", h_min)
+
+    # Step 6: Convert to seeds
     seeds = _bits_to_seeds(extracted)
     logger.info("[qrng] Produced %d seeds (%d bytes each)", len(seeds), SEED_BYTES)
 
@@ -344,7 +441,11 @@ def lambda_handler(event: dict, context: object) -> dict:
         "seeds_generated": len(seeds),
         "raw_bits": len(raw_bits),
         "extracted_bits": len(extracted),
-        "min_entropy": h_min,
+        "raw_entropy": round(h_raw, 4),
+        "post_extraction_entropy": h_min,
+        "health_test_passed": health_pass,
+        "repetition_count_passed": rep_pass,
+        "adaptive_proportion_passed": prop_pass,
         "extractor": extractor_method,
         "backend": backend_used,
         "num_qubits": NUM_QUBITS,

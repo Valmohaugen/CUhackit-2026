@@ -219,15 +219,27 @@ Each qubit: 50% |0⟩, 50% |1⟩
 def _render_history() -> None:
     """Render historical query time-series charts."""
     import pandas as pd
-    import matplotlib.pyplot as plt
     from collections import Counter
 
-    limit = st.slider(
-        "History limit",
-        50, 500, 200,
-        key="history_limit",
-        help="Number of most recent queries to include in historical charts.",
-    )
+    with st.form("history_controls_form"):
+        st.markdown(
+            '<span class="section-controls-form-marker"></span>',
+            unsafe_allow_html=True,
+        )
+        col_limit, col_action = st.columns([3, 1])
+        with col_limit:
+            limit = st.slider(
+                "History limit",
+                50, 500, 200,
+                key="history_limit",
+                help="Number of most recent queries to include in historical charts.",
+            )
+        with col_action:
+            st.markdown("<br>", unsafe_allow_html=True)
+            st.form_submit_button(
+                "Update History",
+                use_container_width=True,
+            )
 
     data = get_history(limit)
     if not data:
@@ -278,7 +290,11 @@ def _render_history() -> None:
             )
             # Use window index as simple x-axis
             scheme_pivot.index = [f"W{i+1}" for i in scheme_pivot.index]
-            st.bar_chart(scheme_pivot)
+            st.bar_chart(scheme_pivot, x_label="Time Window", y_label="Query Count")
+            st.caption(
+                "Total per scheme: "
+                + " | ".join(f"{col}: {scheme_pivot[col].sum()}" for col in scheme_pivot.columns)
+            )
         else:
             st.info("Not enough timestamp data to build volume chart.")
 
@@ -288,12 +304,14 @@ def _render_history() -> None:
         st.markdown("**Queries by Scheme**")
         scheme_counts = Counter(q.get("scheme", "unknown") for q in data)
         df_sc = pd.DataFrame.from_dict(scheme_counts, orient="index", columns=["Count"])
-        st.bar_chart(df_sc)
+        st.bar_chart(df_sc, x_label="Scheme", y_label="Query Count")
+        st.caption(" | ".join(f"{k}: {v}" for k, v in scheme_counts.items()))
     with col_src:
         st.markdown("**Queries by Seed Source**")
         source_counts = Counter(q.get("seed_source", "unknown") for q in data)
         df_src = pd.DataFrame.from_dict(source_counts, orient="index", columns=["Count"])
-        st.bar_chart(df_src)
+        st.bar_chart(df_src, x_label="Source", y_label="Query Count")
+        st.caption(" | ".join(f"{k}: {v}" for k, v in source_counts.items()))
 
     st.markdown("---")
 
@@ -324,23 +342,32 @@ def _render_history() -> None:
         plot_data["Total"] = total_times
 
     if plot_data:
-        fig, ax = plt.subplots(figsize=(9, 4))
-        ax.boxplot(
-            plot_data.values(),
-            labels=plot_data.keys(),
-            patch_artist=True,
-            boxprops=dict(facecolor="#F56600", alpha=0.6),
-            medianprops=dict(color="#1a1a1a", linewidth=2),
-            whiskerprops=dict(color="#666666"),
-            capprops=dict(color="#666666"),
-            flierprops=dict(marker="o", color="#F56600", alpha=0.4, markersize=4),
-        )
-        ax.set_ylabel("Latency (ms)")
-        ax.set_title("DNS Operation Latency — Box Plot Distribution")
-        ax.grid(axis="y", alpha=0.3)
-        fig.tight_layout()
-        st.pyplot(fig)
-        plt.close(fig)
+        try:
+            import matplotlib.pyplot as plt
+        except ModuleNotFoundError:
+            st.warning(
+                "Install `matplotlib` to view the latency box plot. "
+                "The summary statistics table below is still available."
+            )
+        else:
+            fig, ax = plt.subplots(figsize=(9, 4))
+            ax.boxplot(
+                plot_data.values(),
+                labels=plot_data.keys(),
+                patch_artist=True,
+                boxprops=dict(facecolor="#F56600", alpha=0.6),
+                medianprops=dict(color="#1a1a1a", linewidth=2),
+                whiskerprops=dict(color="#666666"),
+                capprops=dict(color="#666666"),
+                flierprops=dict(marker="o", color="#F56600", alpha=0.4, markersize=4),
+            )
+            ax.set_xlabel("Operation")
+            ax.set_ylabel("Latency (ms)")
+            ax.set_title("DNS Operation Latency — Box Plot Distribution")
+            ax.grid(axis="y", alpha=0.3)
+            fig.tight_layout()
+            st.pyplot(fig)
+            plt.close(fig)
 
     # Summary stats table
     if plot_data:

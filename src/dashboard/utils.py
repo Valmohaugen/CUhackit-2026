@@ -88,6 +88,10 @@ def get_history(limit: int = 200) -> list | None:
     return _get(f"/api/metrics/history?limit={limit}")
 
 
+def get_security_margin() -> list | None:
+    return _get("/api/attack/security-margin")
+
+
 def resolve_with_options(domain: str, scheme: str | None = None, source: str | None = None) -> dict | None:
     payload: dict = {"domain": domain}
     if scheme:

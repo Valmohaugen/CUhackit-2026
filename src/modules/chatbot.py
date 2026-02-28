@@ -130,6 +130,18 @@ HNDL threat by data type:
 - Personal communications (5-10 years): HIGH
 - Ephemeral session keys (<1 year): LOW
 
+## Industry Status & Standards Timeline
+- FIPS 206 (Falcon/FN-DSA) is still in draft — expected finalization 2025-2026. \
+Falcon-512 is already available in liboqs but not yet a final NIST standard.
+- ML-KEM-768 hybrid key exchange is already deployed in ~35% of HTTPS traffic \
+(Chrome + Cloudflare), making it the fastest PQ adoption in history.
+- EDNS0 limits DNS UDP payloads to 1,232 bytes. Falcon-512 signatures (666 B) fit; \
+ML-DSA-65 (3,309 B) requires TCP fallback or DNS-over-HTTPS.
+- CNSA 2.0 (NSA) requires pure PQC (no classical fallback) by 2035 for national \
+security systems. Hybrid is an interim step, not the end state.
+- Quantinuum Quantum Origin is the first commercially available NIST-validated QRNG, \
+providing certified quantum randomness via cloud API.
+
 ## Crypto-Agility & Migration
 Crypto-agility is the ability to quickly swap cryptographic algorithms without redesigning \
 the system. This project demonstrates it via the sidebar toggle — switch between ML-DSA, \
@@ -271,7 +283,7 @@ async def chat(
     try:
         client = anthropic.AsyncAnthropic(api_key=api_key)
         response = await client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-5-20250514",
             max_tokens=1024,
             system=SYSTEM_PROMPT,
             messages=messages,

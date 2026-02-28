@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.dashboard.utils import get_shors_status, start_shors, _get, get_config, set_config
+from src.dashboard.utils import get_shors_status, start_shors, get_security_margin, get_config, set_config
 
 
 # Preset configs for deployment simulation
@@ -96,12 +96,27 @@ def _render_shors_demo() -> None:
         "The algorithm tries multiple coprime bases to find the period."
     )
 
-    col1, col2 = st.columns([2, 1])
-    with col1:
-        n = st.number_input("Number to factor (N)", min_value=4, max_value=100, value=15)
-    with col2:
-        st.markdown("<br>", unsafe_allow_html=True)
-        run_btn = st.button("Run Shor's", type="primary", use_container_width=True)
+    with st.form("shors_controls_form"):
+        st.markdown(
+            '<span class="section-controls-form-marker"></span>',
+            unsafe_allow_html=True,
+        )
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            n = st.number_input(
+                "Number to factor (N)",
+                min_value=4,
+                max_value=100,
+                value=15,
+                key="shors_n",
+            )
+        with col2:
+            st.markdown("<br>", unsafe_allow_html=True)
+            run_btn = st.form_submit_button(
+                "Run Shor's",
+                type="primary",
+                use_container_width=True,
+            )
 
     if run_btn:
         result = start_shors(n)
@@ -297,17 +312,22 @@ def _render_scheme_defense_comparison() -> None:
 
 def _render_circuit_and_histogram(result: dict) -> None:
     """Render the quantum circuit diagram and measurement histogram."""
-    # Circuit diagram
+    # Circuit diagram — collapsible, horizontal-scrollable container
     circuit_text = result.get("circuit_text", "")
     if circuit_text:
-        st.markdown("#### Quantum Phase Estimation Circuit")
         n_work = result.get("n_work_qubits", "?")
-        st.caption(
-            f"{result.get('qubits_used', '?')} qubits: "
-            f"8 counting (phase estimation) + {n_work} work (mod-N register). "
-            f"Transpiled depth: {result.get('circuit_depth', '?'):,} gates."
-        )
-        st.code(circuit_text, language=None)
+        with st.expander("Quantum Phase Estimation Circuit", expanded=False):
+            st.caption(
+                f"{result.get('qubits_used', '?')} qubits: "
+                f"8 counting (phase estimation) + {n_work} work (mod-N register). "
+                f"Transpiled depth: {result.get('circuit_depth', '?'):,} gates."
+            )
+            st.markdown(
+                f'<div style="overflow-x:auto; max-height:320px; overflow-y:auto;">'
+                f'<pre style="white-space:pre; font-size:0.75rem; line-height:1.2; '
+                f'color:#333; margin:0;">{circuit_text}</pre></div>',
+                unsafe_allow_html=True,
+            )
 
     # Measurement histogram — shows quantum interference pattern
     measurement_counts = result.get("measurement_counts", {})
@@ -324,7 +344,15 @@ def _render_circuit_and_histogram(result: dict) -> None:
             list(measurement_counts.items()),
             columns=["Bitstring", "Count"],
         ).set_index("Bitstring")
-        st.bar_chart(df)
+        st.bar_chart(df, x_label="Bitstring", y_label="Measurement Count")
+        top_entries = df.head(5)
+        st.caption(
+            "Top counts: "
+            + " | ".join(
+                f"{bs}: {int(row['Count'])}"
+                for bs, row in top_entries.iterrows()
+            )
+        )
 
         st.markdown(
             "The **interference pattern** above is the hallmark of quantum computing. "
@@ -477,7 +505,7 @@ def _render_security_margins() -> None:
 
     if st.button("Run Security Analysis", type="primary"):
         with st.spinner("Benchmarking and analyzing..."):
-            data = _get("/api/attack/security-margin")
+            data = get_security_margin()
 
         if data:
             for entry in data:

@@ -266,7 +266,7 @@ class QuantumDNSStack(Stack):
         events.Rule(
             self,
             "QRNGSchedule",
-            schedule=events.Schedule.rate(Duration.minutes(2)),
+            schedule=events.Schedule.rate(Duration.minutes(5)),
             targets=[targets.LambdaFunction(qrng_lambda)],
         )
 

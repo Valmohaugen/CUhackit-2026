@@ -51,9 +51,17 @@ _KNOWN_FACTORS: dict[int, list[int]] = {
     21: [3, 7],
     33: [3, 11],
     35: [5, 7],
+    51: [3, 17],
     55: [5, 11],
+    57: [3, 19],
+    65: [5, 13],
+    69: [3, 23],
     77: [7, 11],
+    85: [5, 17],
+    87: [3, 29],
     91: [7, 13],
+    93: [3, 31],
+    95: [5, 19],
 }
 
 
@@ -300,8 +308,8 @@ def _compute_factors(n: int, a: int, r: int) -> list[int] | None:
         logger.warning("[SHORS] Order r=%d is odd, cannot extract factors", r)
         return None
 
-    guess_plus = math.gcd(pow(a, r // 2) + 1, n)
-    guess_minus = math.gcd(pow(a, r // 2) - 1, n)
+    guess_plus = math.gcd(pow(a, r // 2, n) + 1, n)
+    guess_minus = math.gcd(pow(a, r // 2, n) - 1, n)
 
     factors: set[int] = set()
     for g in (guess_plus, guess_minus):

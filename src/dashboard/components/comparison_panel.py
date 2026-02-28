@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from src.dashboard.utils import resolve_with_options
+from src.dashboard.utils import get_qrng_status, resolve_with_options
 
 AVAILABLE_SCHEMES = ["ml-dsa-65", "falcon-512", "slh-dsa-128", "rsa-2048"]
 AVAILABLE_SOURCES = ["qrng", "prng"]
@@ -21,27 +21,49 @@ def render_comparison_panel() -> None:
     # Reuse domain from resolver panel if available
     default_domain = st.session_state.get("resolved_domain", "example.com")
 
-    domain = st.text_input(
-        "Domain to compare",
-        value=default_domain,
-        key="comparison_domain",
-    )
-
-    col_schemes, col_sources = st.columns(2)
-    with col_schemes:
-        schemes = st.multiselect(
-            "Schemes",
-            AVAILABLE_SCHEMES,
-            default=["ml-dsa-65", "falcon-512", "rsa-2048"],
+    with st.form("comparison_controls_form"):
+        st.markdown(
+            '<span class="section-controls-form-marker"></span>',
+            unsafe_allow_html=True,
         )
-    with col_sources:
-        sources = st.multiselect(
-            "Seed Sources",
-            AVAILABLE_SOURCES,
-            default=["qrng", "prng"],
+        domain = st.text_input(
+            "Domain to compare",
+            value=default_domain,
+            key="comparison_domain",
         )
 
-    if st.button("Run Comparison", type="primary") and domain and schemes and sources:
+        col_schemes, col_sources = st.columns(2)
+        with col_schemes:
+            schemes = st.multiselect(
+                "Schemes",
+                AVAILABLE_SCHEMES,
+                default=["ml-dsa-65", "falcon-512", "rsa-2048"],
+                key="comparison_schemes",
+            )
+        with col_sources:
+            sources = st.multiselect(
+                "Seed Sources",
+                AVAILABLE_SOURCES,
+                default=["qrng", "prng"],
+                key="comparison_sources",
+            )
+
+        run_comparison = st.form_submit_button(
+            "Run Comparison",
+            type="primary",
+            use_container_width=True,
+        )
+
+    # Show QRNG pool status so the user knows if QRNG seeds are available
+    if "qrng" in sources:
+        pool_status = get_qrng_status()
+        pool_size = pool_status.get("pool_size", 0) if pool_status else 0
+        if pool_size == 0:
+            st.warning("QRNG seed pool is empty — QRNG requests will fall back to PRNG.")
+        else:
+            st.caption(f"QRNG pool: {pool_size:,} seeds available")
+
+    if run_comparison and domain and schemes and sources:
         results = []
         progress = st.progress(0)
         total = len(schemes) * len(sources)
@@ -53,12 +75,30 @@ def render_comparison_panel() -> None:
                 with st.spinner(f"Resolving with {scheme} / {source}..."):
                     result = resolve_with_options(domain, scheme=scheme, source=source)
                 if result:
-                    result["_label"] = f"{result.get('scheme', scheme)} ({source})"
+                    actual_source = result.get("seed_source", source)
+                    if source == "qrng" and actual_source == "prng":
+                        result["_label"] = f"{result.get('scheme', scheme)} (qrng->prng fallback)"
+                    else:
+                        result["_label"] = f"{result.get('scheme', scheme)} ({actual_source})"
+                    result["_requested_source"] = source
                     results.append(result)
+                else:
+                    st.warning(f"Failed to resolve {domain} with {scheme} / {source}")
                 idx += 1
                 progress.progress(idx / total)
 
         progress.empty()
+
+        # Warn if any QRNG requests silently fell back to PRNG
+        fallback_count = sum(
+            1 for r in results
+            if r.get("_requested_source") == "qrng" and r.get("seed_source") == "prng"
+        )
+        if fallback_count:
+            st.warning(
+                f"{fallback_count} QRNG request(s) fell back to PRNG — "
+                "the QRNG seed pool may be empty. Refill the pool or wait for the background refill."
+            )
 
         if results:
             _render_comparison_results(results)
@@ -85,7 +125,7 @@ def _render_comparison_results(results: list[dict]) -> None:
     df = pd.DataFrame(chart_data).set_index("Configuration")
 
     st.markdown("#### Latency Comparison")
-    st.bar_chart(df[["DNS Lookup (ms)", "Signing (ms)", "Verification (ms)", "Seed Fetch (ms)"]])
+    st.bar_chart(df[["DNS Lookup (ms)", "Signing (ms)", "Verification (ms)", "Seed Fetch (ms)"]], x_label="Configuration", y_label="Time (ms)")
 
     # Numeric summary for latency comparison
     fastest = df[["DNS Lookup (ms)", "Signing (ms)", "Verification (ms)", "Seed Fetch (ms)"]].sum(axis=1)
@@ -96,7 +136,7 @@ def _render_comparison_results(results: list[dict]) -> None:
     )
 
     st.markdown("#### Total End-to-End Latency")
-    st.bar_chart(df[["Total (ms)"]])
+    st.bar_chart(df[["Total (ms)"]], x_label="Configuration", y_label="Total Latency (ms)")
 
     # Numeric summary for total latency
     st.caption(
@@ -119,8 +159,8 @@ def _render_comparison_results(results: list[dict]) -> None:
     st.dataframe(pd.DataFrame(table_data), use_container_width=True, hide_index=True)
 
     # QRNG vs PRNG overlay: group by scheme, show both sources on same chart
-    qrng_results = [r for r in results if "(qrng)" in r["_label"]]
-    prng_results = [r for r in results if "(prng)" in r["_label"]]
+    qrng_results = [r for r in results if r.get("seed_source") == "qrng"]
+    prng_results = [r for r in results if r.get("seed_source") == "prng"]
 
     if qrng_results and prng_results:
         st.markdown("#### QRNG vs PRNG Latency by Scheme")
@@ -136,7 +176,7 @@ def _render_comparison_results(results: list[dict]) -> None:
                 })
         if overlay_data:
             overlay_df = pd.DataFrame(overlay_data).set_index("Scheme")
-            st.bar_chart(overlay_df)
+            st.bar_chart(overlay_df, x_label="Scheme", y_label="Total Latency (ms)")
             # Numeric values for QRNG vs PRNG
             captions = []
             for row in overlay_data:

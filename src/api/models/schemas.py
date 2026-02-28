@@ -67,6 +67,7 @@ class ResolveResponse(BaseModel):
     sign_ms: float = 0.0
     verify_ms: float = 0.0
     client_ip: str = ""
+    entropy_source_detail: str = ""
 
 
 # ---------------------------------------------------------------------------

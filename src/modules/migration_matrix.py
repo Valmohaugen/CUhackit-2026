@@ -60,7 +60,7 @@ class ScenarioRecommendation:
 _SCHEMES_INFO = {
     "ml-dsa-65": {
         "key_size_bytes": 1952,
-        "signature_bytes": 3293,
+        "signature_bytes": 3309,
         "latency_factor": 1.2,
         "packet_factor": 3.5,
     },

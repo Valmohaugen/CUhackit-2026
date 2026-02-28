@@ -102,6 +102,7 @@ class PQSigner:
     algorithm: str
     _resolved_name: str = field(init=False, default="")
     _signer: object = field(init=False, default=None)
+    _verifier: object = field(init=False, default=None)
     # Keypair is cached to avoid repeated keygen, which is the most expensive
     # lattice operation (Ducas et al. 2018, Table 3). One keygen per signer lifetime.
     _public_key: bytes = field(init=False, default=b"")
@@ -155,7 +156,7 @@ class PQSigner:
         Reuses a cached verifier instance to avoid re-creating the liboqs
         object on every call (~0.1-0.5ms saved per verification).
         """
-        if not hasattr(self, "_verifier") or self._verifier is None:
+        if self._verifier is None:
             self._verifier = oqs.Signature(self._resolved_name)
         try:
             return self._verifier.verify(message, signature, self._public_key)
@@ -243,7 +244,7 @@ def create_signer(scheme: str) -> Signer:
     Parameters
     ----------
     scheme : str
-        One of: ml-dsa-65, falcon-512, rsa-2048
+        One of: ml-dsa-65, falcon-512, slh-dsa-128, rsa-2048
 
     Returns
     -------
