@@ -46,6 +46,8 @@ class ResolveRequest(BaseModel):
     """Request body for POST /api/resolve."""
 
     domain: str = Field(..., examples=["example.com"])
+    scheme: str | None = None  # Optional per-request override
+    source: str | None = None  # Optional per-request override ("qrng" or "prng")
 
 
 class ResolveResponse(BaseModel):
@@ -59,6 +61,12 @@ class ResolveResponse(BaseModel):
     seed_source: str
     latency_ms: float
     timestamp: str
+    # Per-step timing breakdown
+    seed_fetch_ms: float = 0.0
+    dns_lookup_ms: float = 0.0
+    sign_ms: float = 0.0
+    verify_ms: float = 0.0
+    client_ip: str = ""
 
 
 # ---------------------------------------------------------------------------

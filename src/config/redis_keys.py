@@ -52,6 +52,12 @@ class RedisKeys:
     ATTACK_SHORS_STATUS = "attack:shors:status"
 
     # ---------------------------------------------------------------------------
+    # Historical Queries (sorted set keyed by timestamp)
+    # ---------------------------------------------------------------------------
+    HISTORY_QUERIES = "history:queries"
+    HISTORY_QUERIES_MAX = 10_000
+
+    # ---------------------------------------------------------------------------
     # Benchmark Cache
     # ---------------------------------------------------------------------------
     @staticmethod

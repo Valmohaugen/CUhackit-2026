@@ -1,10 +1,13 @@
 """Live Metrics panel: Real-time DNS query feed and QRNG status.
 
 Provides:
-  - render_metrics_panel: Auto-refreshing metrics display
+  - render_metrics_panel: Auto-refreshing metrics display using @st.fragment
+    for partial reruns (no full-page refresh)
 """
 
 from __future__ import annotations
+
+import time
 
 import streamlit as st
 
@@ -16,9 +19,16 @@ def render_metrics_panel() -> None:
     st.header("Live Metrics")
     st.markdown("Real-time monitoring of DNS resolution and QRNG operations.")
 
-    # Auto-refresh toggle
-    auto_refresh = st.checkbox("Auto-refresh (2s)", value=True)
+    # Auto-refresh toggle (outside the fragment so it persists)
+    auto_refresh = st.checkbox("Auto-refresh (1s)", value=True)
 
+    # Use @st.fragment so only this section refreshes, not the entire page
+    _metrics_fragment(auto_refresh)
+
+
+@st.fragment
+def _metrics_fragment(auto_refresh: bool) -> None:
+    """Fragment that refreshes independently without a full-page rerun."""
     col_metrics, col_pool = st.columns([2, 1])
 
     with col_metrics:
@@ -28,8 +38,7 @@ def render_metrics_panel() -> None:
         _render_pool_status()
 
     if auto_refresh:
-        import time
-        time.sleep(2)
+        time.sleep(1)
         st.rerun()
 
 

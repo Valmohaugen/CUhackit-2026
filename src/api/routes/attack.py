@@ -39,9 +39,12 @@ async def get_shors_status(request: Request) -> ShorsStatusResponse:
     r = request.app.state.redis
 
     status = await r.get(RedisKeys.ATTACK_SHORS_STATUS) or "idle"
+    # Normalize: "complete" → "done" for backwards compat
+    if status == "complete":
+        status = "done"
     result = None
 
-    if status == "done":
+    if status in ("done", "failed"):
         raw = await r.get(RedisKeys.ATTACK_SHORS_RESULT)
         if raw:
             try:

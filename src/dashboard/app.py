@@ -48,11 +48,10 @@ st.markdown(
 )
 
 # Tab layout for all module panels
-tab_resolver, tab_attack, tab_bench, tab_migration, tab_metrics = st.tabs([
+tab_resolver, tab_attack, tab_bench, tab_metrics = st.tabs([
     "DNS Resolver",
     "Attack Theater",
     "Benchmarks",
-    "Migration Matrix",
     "Live Metrics",
 ])
 
@@ -67,10 +66,6 @@ with tab_attack:
 with tab_bench:
     from src.dashboard.components.benchmark_panel import render_benchmark_panel
     render_benchmark_panel()
-
-with tab_migration:
-    from src.dashboard.components.migration_panel import render_migration_panel
-    render_migration_panel()
 
 with tab_metrics:
     from src.dashboard.components.metrics_panel import render_metrics_panel

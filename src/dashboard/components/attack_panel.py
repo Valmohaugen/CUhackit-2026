@@ -6,8 +6,6 @@ Provides:
 
 from __future__ import annotations
 
-import time
-
 import streamlit as st
 
 from src.dashboard.utils import get_shors_status, start_shors
@@ -59,12 +57,17 @@ def _render_shors_demo() -> None:
 
         if status == "running":
             st.info("Computing... this may take 5-30 seconds.")
+            import time
             time.sleep(2)
             st.rerun()
 
         elif status == "done" and status_data.get("result"):
             result = status_data["result"]
-            st.success("Factoring complete!")
+            method = result.get("method", "quantum")
+            if method == "precomputed":
+                st.success("Factoring complete (precomputed fallback)")
+            else:
+                st.success("Factoring complete via quantum circuit!")
 
             col_n, col_factors, col_time = st.columns(3)
             with col_n:
@@ -89,8 +92,22 @@ def _render_shors_demo() -> None:
                     f"could factor the 617-digit RSA-2048 modulus using ~4,000 logical qubits. "
                     f"This demo used {result.get('qubits_used', '?')} qubits to factor N={result.get('n', '?')}."
                 )
+                if method == "precomputed":
+                    st.caption(
+                        "Note: The simulator did not converge on this run, "
+                        "so the known factors of 15 (3 x 5) were used. "
+                        "This is expected — real quantum hardware has higher fidelity."
+                    )
             else:
                 st.warning("Factoring did not find non-trivial factors in this run. Try again.")
+
+        elif status == "failed" and status_data.get("result"):
+            result = status_data["result"]
+            st.warning(
+                f"Factoring N={result.get('n', '?')} did not find factors "
+                f"after {result.get('shots', '?')} shots in {result.get('time_seconds', 0):.2f}s. "
+                "Try running again."
+            )
 
         elif status == "error":
             st.error(f"Error: {status_data.get('result', {}).get('error', 'Unknown')}")

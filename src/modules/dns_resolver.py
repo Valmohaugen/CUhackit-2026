@@ -35,6 +35,12 @@ class ResolveResult:
     seed_source: str  # "qrng" or "prng"
     latency_ms: float
     timestamp: str
+    # Per-step timing breakdown
+    seed_fetch_ms: float = 0.0
+    dns_lookup_ms: float = 0.0
+    sign_ms: float = 0.0
+    verify_ms: float = 0.0
+    client_ip: str = ""
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -70,6 +76,7 @@ async def resolve(
     scheme: str = "ml-dsa-65",
     use_qrng: bool = True,
     upstream: str = "8.8.8.8",
+    client_ip: str = "",
 ) -> ResolveResult:
     """Resolve a domain, sign the response with PQ crypto, and log metrics.
 
@@ -85,6 +92,8 @@ async def resolve(
         Whether to use QRNG seeds (True) or PRNG (False).
     upstream : str
         Upstream DNS server IP.
+    client_ip : str
+        IP address of the requesting client.
 
     Returns
     -------
@@ -94,9 +103,12 @@ async def resolve(
     t_start = time.perf_counter()
 
     # Step 1: Get a seed
+    t0 = time.perf_counter()
     seed, seed_source = await get_seed(r, force_prng=not use_qrng)
+    seed_fetch_ms = round((time.perf_counter() - t0) * 1000, 3)
 
     # Step 2: DNS query
+    t0 = time.perf_counter()
     resolver = dns.asyncresolver.Resolver()
     resolver.nameservers = [upstream]
     resolver.lifetime = 5.0
@@ -110,16 +122,21 @@ async def resolve(
     except Exception as e:
         ip_addresses = []
         logger.error("[dns_resolver] DNS error for %s: %s", domain, e)
+    dns_lookup_ms = round((time.perf_counter() - t0) * 1000, 3)
 
     # Step 3: Build message to sign (domain + IPs + seed)
     message = f"{domain}|{'|'.join(ip_addresses)}|{seed.hex()}".encode()
 
     # Step 4: Sign with PQ crypto
     signer = _get_signer(scheme)
+    t0 = time.perf_counter()
     signature = signer.sign(message)
+    sign_ms = round((time.perf_counter() - t0) * 1000, 3)
 
     # Step 5: Verify signature
+    t0 = time.perf_counter()
     verified = signer.verify(message, signature)
+    verify_ms = round((time.perf_counter() - t0) * 1000, 3)
 
     t_end = time.perf_counter()
     latency_ms = round((t_end - t_start) * 1000, 2)
@@ -133,18 +150,26 @@ async def resolve(
         seed_source=seed_source.value,
         latency_ms=latency_ms,
         timestamp=datetime.now(timezone.utc).isoformat(),
+        seed_fetch_ms=seed_fetch_ms,
+        dns_lookup_ms=dns_lookup_ms,
+        sign_ms=sign_ms,
+        verify_ms=verify_ms,
+        client_ip=client_ip,
     )
 
     # Step 6: Log to Redis
     await _log_query(r, result)
 
     logger.info(
-        "[dns_resolver] %s → %s (%s, %s, %.1fms)",
+        "[dns_resolver] %s → %s (%s, %s, %.1fms | dns=%.1f sign=%.1f verify=%.1f)",
         domain,
         ip_addresses,
         signer.scheme_name,
         seed_source.value,
         latency_ms,
+        dns_lookup_ms,
+        sign_ms,
+        verify_ms,
     )
 
     return result
@@ -155,12 +180,21 @@ async def resolve(
 # ---------------------------------------------------------------------------
 
 async def _log_query(r: aioredis.Redis, result: ResolveResult) -> None:
-    """Log a query result to Redis live_queries list."""
+    """Log a query result to Redis live_queries list and historical sorted set."""
     try:
+        data = json.dumps(result.to_dict())
+        ts = time.time()
         pipe = r.pipeline()
-        pipe.lpush(RedisKeys.LIVE_QUERIES, json.dumps(result.to_dict()))
+        # Live queries (recent list)
+        pipe.lpush(RedisKeys.LIVE_QUERIES, data)
         pipe.ltrim(RedisKeys.LIVE_QUERIES, 0, RedisKeys.LIVE_QUERIES_MAX - 1)
         pipe.incr(RedisKeys.RESOLVER_TOTAL_QUERIES)
+        # Historical queries (sorted set keyed by timestamp)
+        pipe.zadd(RedisKeys.HISTORY_QUERIES, {data: ts})
+        # Trim to max size (remove oldest entries)
+        pipe.zremrangebyrank(
+            RedisKeys.HISTORY_QUERIES, 0, -(RedisKeys.HISTORY_QUERIES_MAX + 1)
+        )
         await pipe.execute()
     except Exception as e:
         logger.warning("[dns_resolver] Failed to log query: %s", e)
