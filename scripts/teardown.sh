@@ -31,6 +31,7 @@ echo ""
 
 # CDK destroy
 echo -e "${YELLOW}[1/3]${NC} Destroying CDK stack..."
+export PATH="$HOME/.npm-global/bin:$PATH"
 cd "$INFRA_DIR"
 if [[ -d ".venv" ]]; then
     source .venv/bin/activate
