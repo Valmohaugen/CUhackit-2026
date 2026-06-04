@@ -146,7 +146,10 @@ def _render_timing() -> None:
         st.info(
             f"**Fastest for DNS:** {fastest['Scheme']} — "
             f"combined sign+verify: {total_sv:.2f} ms. "
-            f"For context, a typical DNS lookup is 5–15 ms, so PQ signing adds minimal overhead."
+            f"For context, a typical DNS lookup is 5–15 ms, so PQ signing adds minimal overhead. "
+            f"Literature baselines (AVX2 @ 3.3 GHz, Demir et al. 2025): "
+            f"ML-DSA-65 sign=0.120ms verify=0.045ms; Falcon-512 sign=0.111ms verify=0.024ms; "
+            f"RSA-2048 sign=0.991ms verify=0.045ms."
         )
 
 

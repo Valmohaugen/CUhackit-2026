@@ -220,28 +220,33 @@ def _render_attack_timing(result: dict) -> None:
     import pandas as pd
 
     # Estimated quantum attack times for each scheme
+    # Core-SVP estimates from CRYSTALS-Kyber Round 3 spec
     attack_data = [
         {
             "Scheme": "RSA-2048",
-            "Shor's Attack Time": "~8 hours (20M qubits)",
+            "Quantum Attack": "~8 hours (Shor's, 20M qubits)",
+            "Classical Security": "112 bits",
             "NIST Level": 0,
             "Status": "BROKEN by Shor's",
         },
         {
             "Scheme": "ML-DSA-65",
-            "Shor's Attack Time": "~10^12 years (no known quantum attack)",
+            "Quantum Attack": "~2^165 ops (core-SVP, BKZ-624)",
+            "Classical Security": "~182 bits (core-SVP)",
             "NIST Level": 3,
             "Status": "RESISTANT — lattice problem",
         },
         {
             "Scheme": "Falcon-512",
-            "Shor's Attack Time": "~10^8 years (no known quantum attack)",
+            "Quantum Attack": "~2^107 ops (core-SVP, BKZ-385)",
+            "Classical Security": "~118 bits (core-SVP)",
             "NIST Level": 1,
             "Status": "RESISTANT — NTRU lattice",
         },
         {
             "Scheme": "SLH-DSA-128",
-            "Shor's Attack Time": "~10^8 years (no known quantum attack)",
+            "Quantum Attack": "~2^64 ops (Grover on hash)",
+            "Classical Security": "128 bits",
             "NIST Level": 1,
             "Status": "RESISTANT — hash-based",
         },
@@ -284,9 +289,9 @@ def _render_scheme_defense_comparison() -> None:
 
     timeline_data = {
         "Scheme": ["RSA-2048", "ECC-256", "ML-DSA-65", "Falcon-512", "SLH-DSA-128", "AES-256"],
-        "Classical Attack": ["2^112 ops", "2^128 ops", "2^192 ops", "2^128 ops", "2^128 ops", "2^256 ops"],
-        "Quantum Attack": ["O((log N)^3)", "O((log N)^3)", "2^96 ops (Grover)", "2^64 ops (Grover)", "2^64 ops (Grover)", "2^128 ops (Grover)"],
-        "Years to Break": ["~8 hours*", "~4 hours*", "~10^12", "~10^8", "~10^8", "~10^38"],
+        "Classical Attack": ["2^112 ops", "2^128 ops", "~2^182 ops (core-SVP)", "~2^118 ops (core-SVP)", "2^128 ops", "2^256 ops"],
+        "Quantum Attack": ["O((log N)^3) Shor's", "O((log N)^3) Shor's", "~2^165 ops (core-SVP)", "~2^107 ops (core-SVP)", "2^64 ops (Grover)", "2^128 ops (Grover)"],
+        "Est. Time to Break": ["~8 hours*", "~4 hours*", "Infeasible", "Infeasible", "Infeasible", "Infeasible"],
         "Shor Vulnerable": ["YES", "YES", "NO", "NO", "NO", "NO"],
     }
 
@@ -444,6 +449,24 @@ def _render_hndl_analysis() -> None:
         use_container_width=True,
         hide_index=True,
     )
+
+    st.markdown("### DNS Threat Statistics")
+    st.markdown(
+        "Current DNS attack data underscores the urgency of post-quantum migration."
+    )
+
+    dns_stats = [
+        {"Metric": "Organizations attacked (past 12 mo)", "Value": "90%", "Source": "IDC/EfficientIP 2023"},
+        {"Metric": "Avg attacks per org per year", "Value": "7.5", "Source": "IDC/EfficientIP 2023"},
+        {"Metric": "Avg cost per DNS attack", "Value": "$1.1 million", "Source": "IDC/EfficientIP 2023"},
+        {"Metric": "Financial sector cost per attack", "Value": "$1.2 million", "Source": "IDC/EfficientIP 2023"},
+        {"Metric": "DNS DDoS YoY growth (2024)", "Value": "+80%", "Source": "Cloudflare Q1 2024"},
+        {"Metric": "DNS share of network-layer DDoS", "Value": "54%", "Source": "Akamai 2024"},
+        {"Metric": "DDoS attacks mitigated (2024)", "Value": "21.3 million", "Source": "Cloudflare 2024"},
+        {"Metric": "Record single DDoS attack", "Value": "5.6 Tbps", "Source": "Cloudflare Q4 2024"},
+    ]
+    df_dns = pd.DataFrame(dns_stats)
+    st.dataframe(df_dns, use_container_width=True, hide_index=True)
 
     st.info(
         "Organizations handling data with long secrecy requirements should "

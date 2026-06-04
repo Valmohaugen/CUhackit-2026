@@ -63,7 +63,7 @@ quantum computers [Ajtai 1996, Peikert 2016]
 ## Signature Schemes
 | Scheme | Type | Basis | NIST Level | Public Key | Signature |
 |--------|------|-------|-----------|------------|-----------|
-| ML-DSA-65 (Dilithium) | Lattice | Module-LWE | 3 | 1,952 B | 3,309 B |
+| ML-DSA-65 (Dilithium) | Lattice | Module-LWE | 3 | 1,952 B | 3,293 B |
 | Falcon-512 | Lattice | NTRU | 1 | 897 B | 666 B |
 | SLH-DSA-128 (SPHINCS+) | Hash-based | SPHINCS+ | 1 | 32 B | 7,856 B |
 | RSA-2048 | Classical | Factoring | 0 (PQ) | 256 B | 256 B |
@@ -131,10 +131,15 @@ HNDL threat by data type:
 - Ephemeral session keys (<1 year): LOW
 
 ## Industry Status & Standards Timeline
-- FIPS 206 (Falcon/FN-DSA) is still in draft — expected finalization 2025-2026. \
-Falcon-512 is already available in liboqs but not yet a final NIST standard.
-- ML-KEM-768 hybrid key exchange is already deployed in ~35% of HTTPS traffic \
-(Chrome + Cloudflare), making it the fastest PQ adoption in history.
+- FIPS 206 (FN-DSA, based on Falcon) is expected to be finalized in 2025-2026. \
+Falcon-512 is available in liboqs and is the only PQ signature scheme whose combined \
+public key (897 B) and signature (666 B avg) fit within the 1,232-byte DNS UDP payload \
+limit (DNS Flag Day 2020). Field experiments show ~90% correct UDP delivery for Falcon-512 \
+vs ~50% for Dilithium/SPHINCS+ (Goertzen et al. 2024, RIPE ATLAS, ~10K probes).
+- ML-KEM-768 hybrid key exchange (X25519MLKEM768) was deployed in >50% of human-initiated \
+HTTPS traffic by October 2025 (Cloudflare), up from ~2% pre-Chrome-124 (April 2024). \
+The overhead is negligible: AWS measured 0.05% throughput loss with TLS connection reuse, \
+at a cost of ~2,336 extra bytes in the handshake (IETF draft-ietf-tls-ecdhe-mlkem, 2026).
 - EDNS0 limits DNS UDP payloads to 1,232 bytes. Falcon-512 signatures (666 B) fit; \
 ML-DSA-65 (3,309 B) requires TCP fallback or DNS-over-HTTPS.
 - CNSA 2.0 (NSA) requires pure PQC (no classical fallback) by 2035 for national \
@@ -164,8 +169,12 @@ A: Lambda fills it every 5 minutes. Run `python scripts/local_seed_fill.py` afte
 When empty, the system falls back to os.urandom (PRNG).
 
 Q: What is the performance overhead of PQ crypto?
-A: ML-DSA-65 signing is typically 0.5-2ms — comparable to RSA-2048. Key/signature sizes are \
-larger (3KB sig vs 256B for RSA), but DNS responses are small enough that this is negligible.
+A: With AVX2 optimization on modern x86, ML-DSA-65 signs in 0.120 ms and verifies in 0.045 ms \
+(Demir et al. 2025). Falcon-512 is even faster: sign ~0.111 ms, verify ~0.024 ms. For comparison, \
+RSA-2048 signs in ~0.991 ms — so ML-DSA-65 is actually 8x faster for signing. The larger \
+signature sizes (3,293 B vs 256 B for RSA) require TCP fallback or DNS-over-HTTPS for DNSSEC, \
+but transport optimizations like TurboDNS eliminate the associated latency penalty entirely \
+(Rawat & Jhanwar, INDOCRYPT 2024).
 
 Q: Can Shor's algorithm really break RSA?
 A: Yes, with ~4,000 error-corrected logical qubits. Current machines have ~1,000 noisy \
@@ -190,20 +199,19 @@ artifacts that DNS signing creates.
 
 Q: The increase in signing/verification time with post-quantum schemes is a huge drawback \
 for something as latency-sensitive as DNS. How can this solution be viable at scale?
-A: This concern is valid and worth quantifying precisely. ML-DSA-65 signing takes ~1-3ms \
-and verification ~0.2-0.5ms on commodity hardware. A typical DNS lookup takes 5-15ms. \
-So PQ signing adds roughly 10-30% latency overhead for the signing step — but DNS lookup \
-dominates the total. For comparison, DNSSEC with RSA-2048 adds ~0.01-0.05ms for signing, \
-so the overhead is real but not prohibitive. SLH-DSA-128 (SPHINCS+) is the outlier at \
-30-80ms for signing — its conservative hash-based design makes it impractical for \
-high-throughput DNS resolvers but acceptable for offline zone signing. Falcon-512 at \
-0.3-1ms is the fastest PQ option and the most practical for real-time DNS signing. \
-More broadly: NIST standardized these algorithms knowing they would replace RSA/ECC across \
-all of TLS, PKI, and DNSSEC. Browser makers, CDNs, and cloud providers are already deploying \
-ML-KEM (the key exchange counterpart) in production. The latency argument applies equally to \
-TLS handshakes, certificate issuance, and code signing — and industry has concluded the \
-tradeoff is acceptable given the 10-year threat window. This project demonstrates that \
-for DNS specifically, the overhead is well within acceptable bounds.
+A: The numbers are better than you might expect. With AVX2 optimization (Demir et al. 2025): \
+ML-DSA-65 signs in 0.120 ms and verifies in 0.045 ms; Falcon-512 signs in ~0.111 ms and \
+verifies in ~0.024 ms. A typical DNS lookup is 5-15 ms, so PQ crypto adds <1% latency \
+overhead — far less than the 10-30% sometimes cited. For comparison, RSA-2048 signs in \
+~0.991 ms, making it actually slower than both PQ schemes. SLH-DSA-128 (SPHINCS+) is the \
+outlier at 30-80ms for signing — impractical for high-throughput resolvers but acceptable \
+for offline zone signing. The real overhead is bandwidth, not computation: ML-DSA-65 signatures \
+are 3,293 bytes vs 256 for RSA. But transport-layer solutions exist: TurboDNS makes PQ-DNSSEC \
+resolution practically identical to classical ECDSA/RSA (Rawat & Jhanwar, INDOCRYPT 2024), \
+and a comprehensive OQS-BIND9 study found ML-DSA-44 and Falcon-512 DNSSEC showed latency \
+nearly unaffected despite higher bandwidth (arXiv:2506.19943, 2025). For key exchange, AWS \
+measured only 0.05% overhead with hybrid PQ TLS using connection reuse (AWS Security Blog, \
+April 2025). Industry has concluded the tradeoff is clearly acceptable.
 
 Q: Conventional PRNGs like os.urandom use kernel entropy sources and are considered \
 cryptographically secure. Why does QRNG add meaningful security? Isn't entropy the same?
@@ -223,6 +231,30 @@ critical infrastructure) where PRNG compromise is a realistic threat model. The 
 ~0.3ms for a Redis LPOP — essentially free. For a hackathon demo, QRNG also illustrates \
 an important point: quantum technology appears on both sides of the security equation, as \
 both a threat (Shor's) and a defense tool (QRNG).
+
+## DNS Threat Landscape
+The urgency for post-quantum DNS is underscored by current attack statistics. 90% of \
+organizations suffered at least one DNS attack in the prior 12 months, with an average of \
+7.5 attacks per organization per year and an average cost of $1.1 million per attack \
+($1.2M in financial services). 47% reported DNS hijacking; 46% experienced DNS \
+flood/reflection/amplification. DNS-based DDoS attacks increased 80% year-over-year in 2024, \
+comprising 54% of all network-layer DDoS attacks. Cloudflare mitigated 21.3 million DDoS \
+attacks in 2024, a 53% increase over 2023, including a record 5.6 Tbps attack. \
+(Sources: IDC/EfficientIP 2023 Global DNS Threat Report; Cloudflare DDoS Threat Reports 2024-2025)
+
+## QRNG in Context
+Our Qiskit-based QRNG operates at ~90.6 kbit/s on IBM Sherbrooke (Root et al. 2025) — about \
+six orders of magnitude slower than state-of-the-art photonic QRNGs (100 Gbps, Bruynsteen et al. \
+2023). However, it offers a different trust model: well-characterized quantum gate operations \
+with certifiable min-entropy (~0.93-0.99 bits/raw bit depending on processor generation), \
+rather than assumptions about optical component behavior. Raw IBM QPU output shows systematic \
+bias toward |0> (P(0) ~ 0.526 on Melbourne, Strydom & Tame 2021) from T1 relaxation during \
+readout; Von Neumann debiasing achieves near-perfect balance and passes all 15 NIST SP 800-22 \
+tests. An important nuance: commercial QRNGs often fail TestU01 (Alphabit, Rabbit batteries) \
+even while passing NIST and Dieharder. Well-designed CSPRNGs (ChaCha20, AES-CTR-DRBG) pass all \
+known statistical tests. The value of QRNG is information-theoretic unpredictability guaranteed \
+by physics, not superior statistical performance (Martinez et al. 2018; Hurley-Smith & \
+Hernandez-Castro 2020).
 
 ## Guidelines
 - Explain concepts clearly for a general audience — minimal jargon, visual analogies

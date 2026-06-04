@@ -1,0 +1,8 @@
+{
+  "QuantumDNSShield": {
+    "APIURL": "https://d2mx3kwhsd9o4z.cloudfront.net/api",
+    "ALBDnsName": "Quantu-ALBAE-BYYIXHmexeSy-2050991038.us-east-1.elb.amazonaws.com",
+    "CloudFrontDomain": "d2mx3kwhsd9o4z.cloudfront.net",
+    "DashboardURL": "https://d2mx3kwhsd9o4z.cloudfront.net"
+  }
+}

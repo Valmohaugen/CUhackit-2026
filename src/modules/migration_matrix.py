@@ -114,9 +114,12 @@ _SCENARIO_CONFIGS = {
         },
         "recommendation": (
             "Web services should begin hybrid migration within 6 months. "
-            "ML-DSA-65 offers the best balance of security and compatibility. "
-            "Larger signature sizes are manageable for HTTPS but may impact "
-            "mobile clients on slow connections."
+            "ML-DSA-65 offers the best balance of security (NIST Level 3, ~182-bit "
+            "classical / ~165-bit quantum core-SVP security) and performance (sign "
+            "0.120ms, verify 0.045ms with AVX2 — Demir et al. 2025). Hybrid PQ TLS "
+            "adds only 0.05% overhead with connection reuse (AWS 2025). Larger signature "
+            "sizes (3,293 B) are manageable for HTTPS but may impact mobile clients on "
+            "slow connections."
         ),
         "steps": [
             "Audit current TLS certificate infrastructure",
@@ -138,8 +141,10 @@ _SCENARIO_CONFIGS = {
         },
         "recommendation": (
             "IoT devices have 10-20 year lifespans and are already vulnerable "
-            "to harvest-now-decrypt-later attacks. Falcon-512 is preferred due "
-            "to smaller signatures (666 bytes vs 3293 for ML-DSA). Firmware "
+            "to harvest-now-decrypt-later attacks. Falcon-512 is preferred: it is the "
+            "only PQ scheme fitting within the 1,232-byte DNS UDP limit, achieves ~90% "
+            "UDP delivery in Internet-wide measurements (Goertzen et al. 2024, RIPE "
+            "ATLAS), and signs in ~0.111 ms — faster than RSA-2048 (0.991 ms). Firmware "
             "update mechanisms must be PQ-secured first."
         ),
         "steps": [
@@ -210,9 +215,13 @@ _SCENARIO_CONFIGS = {
         },
         "recommendation": (
             "Financial data has extremely long confidentiality requirements "
-            "(20+ years). HNDL attacks are already economically viable. "
-            "HSM vendors are adding PQ support — prioritize HSM firmware updates. "
-            "PCI DSS will require PQ readiness; begin hybrid deployment immediately."
+            "(20+ years). HNDL attacks are already economically viable. Financial "
+            "sector DNS attacks average $1.2 million per incident, with 90% of "
+            "organizations experiencing at least one DNS attack per year "
+            "(IDC/EfficientIP 2023). HSM vendors are adding PQ support — prioritize "
+            "HSM firmware updates. Hybrid PQ TLS adds only 0.05% overhead with "
+            "connection reuse (AWS 2025). PCI DSS will require PQ readiness; begin "
+            "hybrid deployment immediately."
         ),
         "steps": [
             "Upgrade HSMs to PQ-capable firmware",

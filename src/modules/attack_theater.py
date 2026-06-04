@@ -814,6 +814,11 @@ def hndl_analysis() -> dict:
         "Inventory all cryptographic assets and classify by data shelf life.",
         "Implement crypto-agility to enable rapid algorithm swaps.",
         "Monitor NIST and ETSI timelines for updated threat estimates.",
+        "DNS-specific: 90% of organizations experience DNS attacks averaging "
+        "$1.1M in damages (IDC/EfficientIP 2023). DNS is the #1 network-layer "
+        "DDoS vector (54% of attacks). Securing DNS authentication is urgent.",
+        "Consider hybrid PQ TLS for DNS transport (DoT/DoH): AWS measured only "
+        "0.05% overhead with connection reuse (AWS Security Blog, April 2025).",
     ]
 
     result: dict[str, Any] = {
@@ -866,50 +871,52 @@ def security_margin_analysis(sign_ms: float, verify_ms: float, scheme: str) -> d
 
     # Maps all known scheme name variants (including liboqs internal names) to info.
     # liboqs may return names like "SPHINCS+-SHA2-128s-simple" for what we call SLH-DSA-128.
+    # Core-SVP security estimates from CRYSTALS-Kyber Round 3 spec.
+    # Sieving complexity: 2^(0.292*beta) classical, 2^(0.265*beta) quantum.
+    # Lattice schemes have NO known polynomial quantum speedup (Shor's does
+    # not apply). "quantum_attack_years" values are illustrative lower bounds.
     _slh_dsa_entry: dict[str, Any] = {
         "nist_level": 1,
         "classical_bits": 128,
         "quantum_attack_years": 1e8,
-        "basis": "Hash-based (SPHINCS+)",
+        "basis": "Hash-based (SPHINCS+); Grover gives only quadratic speedup",
         "display_name": "SLH-DSA-128",
     }
 
+    _mldsa65_entry: dict[str, Any] = {
+        "nist_level": 3,
+        "classical_bits": 182,  # core-SVP estimate (Kyber R3 spec)
+        "quantum_bits": 165,
+        "bkz_beta": 624,
+        "quantum_attack_years": 1e12,
+        "basis": "Module-LWE lattice (core-SVP: ~182 classical, ~165 quantum bits; BKZ-624)",
+        "display_name": "ML-DSA-65",
+    }
+
+    _falcon512_entry: dict[str, Any] = {
+        "nist_level": 1,
+        "classical_bits": 118,  # core-SVP estimate (NIST Level 1 ≥ AES-128)
+        "quantum_bits": 107,
+        "bkz_beta": 385,
+        "quantum_attack_years": 1e8,
+        "basis": "NTRU lattice (core-SVP: ~118 classical, ~107 quantum bits; BKZ-385)",
+        "display_name": "Falcon-512",
+    }
+
     scheme_info: dict[str, dict[str, Any]] = {
-        "ML-DSA-65": {
-            "nist_level": 3,
-            "classical_bits": 192,
-            "quantum_attack_years": 1e12,
-            "basis": "Module-LWE lattice",
-            "display_name": "ML-DSA-65",
-        },
-        "Dilithium3": {
-            "nist_level": 3,
-            "classical_bits": 192,
-            "quantum_attack_years": 1e12,
-            "basis": "Module-LWE lattice",
-            "display_name": "ML-DSA-65",
-        },
+        "ML-DSA-65": _mldsa65_entry,
+        "Dilithium3": _mldsa65_entry,
         "ML-DSA-44": {
             "nist_level": 2,
-            "classical_bits": 128,
+            "classical_bits": 123,  # core-SVP (Kyber R3 spec)
+            "quantum_bits": 112,
+            "bkz_beta": 423,
             "quantum_attack_years": 1e8,
-            "basis": "Module-LWE lattice",
+            "basis": "Module-LWE lattice (core-SVP: ~123 classical, ~112 quantum bits; BKZ-423)",
             "display_name": "ML-DSA-44",
         },
-        "Falcon-512": {
-            "nist_level": 1,
-            "classical_bits": 128,
-            "quantum_attack_years": 1e8,
-            "basis": "NTRU lattice",
-            "display_name": "Falcon-512",
-        },
-        "Falcon-padded-512": {
-            "nist_level": 1,
-            "classical_bits": 128,
-            "quantum_attack_years": 1e8,
-            "basis": "NTRU lattice",
-            "display_name": "Falcon-512",
-        },
+        "Falcon-512": _falcon512_entry,
+        "Falcon-padded-512": _falcon512_entry,
         # SLH-DSA-128 / SPHINCS+ — all liboqs name variants
         "SLH-DSA-128": _slh_dsa_entry,
         "SLH-DSA-SHA2-128s": _slh_dsa_entry,
